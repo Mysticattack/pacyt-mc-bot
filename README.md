@@ -136,6 +136,20 @@ Wer mit dem Bot zusammen spielen will, schickt diese Befehle an den Agenten oder
 ab. Im Spiel selbst laesst sich der Bot nicht per `/befehl` steuern — normale Chatnachrichten kommen an,
 Kommandos beenden die Verbindung.
 
+
+### WASD-Bedienfeld
+
+`scripts/panel.js` startet ein kleines Bedienfeld (Standard `http://127.0.0.1:3010`, nur Loopback):
+
+```bash
+node scripts/panel.js
+```
+
+W/A/S/D, Leertaste (springen), Schleichen, Steigen/Sinken sowie Stop und Position. Tasten schicken
+`set <richtung> 1` beim Druecken und `set <richtung> 0` beim Loslassen — also genau die WASD-Semantik,
+nur ohne echten Spielfenster. Fuer Zugriff von aussen muesste das Panel hinter einen Reverse Proxy mit
+Auth; es ist bewusst nur an 127.0.0.1 gebunden.
+
 ## Bekannte Grenzen
 
 - **Protokollstand:** Wenn der Server neuer ist als `minecraft-data`, fehlen Weltdaten im Renderer oder

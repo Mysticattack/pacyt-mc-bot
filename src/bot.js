@@ -135,6 +135,14 @@ bot.on('spawn', () => {
         if (bot._followTimer) { clearInterval(bot._followTimer); bot._followTimer = null; }
         st('STOP');
         break;
+      case 'set': {
+        const dir = String(args[0] || '').toLowerCase();
+        const on = String(args[1] || '1') === '1';
+        if (!['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint', 'up', 'down'].includes(dir)) { st('SET_UNBEKANNT ' + dir); break; }
+        bot.setControlState(dir, on);
+        st('SET ' + dir + '=' + on);
+        break;
+      }
       default:
         st('UNBEKANNT ' + verb);
     }
