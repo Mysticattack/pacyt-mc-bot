@@ -65,7 +65,9 @@ button:active{background:#2f6f4f}
   <button id="stop">Stop</button>
   <button id="pos">Position</button>
   <button id="say">Sagen</button>
-  <a href="/viewer" target="_blank" style="color:#9ad;align-self:center">3D-Ansicht</a>
+  <a href="/viewer" target="_blank" style="color:#9ad;align-self:center">Ansicht</a>
+  <button id="pov1">F1 erste Person</button>
+  <button id="pov2">F2 dritte Person</button>
 </div>
 <div id="log"></div>
 <script>
@@ -90,6 +92,20 @@ for (const b of document.querySelectorAll('button[data-k]')) {
 document.getElementById('stop').onclick = () => send('stop');
 document.getElementById('pos').onclick = () => send('pos');
 document.getElementById('say').onclick = () => { const t = prompt('Text:'); if (t) send('say ' + t); };
+
+// PoV umschalten: F1 = erste Person, F2 = dritte Person
+const setPov = (mode) => fetch('/pov?mode=' + mode, { cache: 'no-store' }).then(() => { location.href = '/viewer/'; });
+document.getElementById('pov1').onclick = () => setPov('first');
+document.getElementById('pov2').onclick = () => setPov('third');
+
+// Pfeiltasten: 1 Grad pro Tastendruck
+const ARROWS = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [1, 0], ArrowRight: [-1, 0] };
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F1') { e.preventDefault(); setPov('first'); return; }
+  if (e.key === 'F2') { e.preventDefault(); setPov('third'); return; }
+  const d = ARROWS[e.key];
+  if (d) { e.preventDefault(); send('lookrel ' + d[0] + ' ' + d[1]); }
+});
 </script></body></html>`;
 
 const server = http.createServer((req, res) => {
@@ -100,6 +116,13 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.url.startsWith('/viewer')) { proxyViewer(req, res); return; }
+  if (req.url.startsWith('/pov')) {
+    const mode = (req.url.split('mode=')[1] || 'first').trim();
+    if (mode === 'third') { startViewer(VIEWER_PORT_3P, false); povPort = VIEWER_PORT_3P; } else { startViewer(VIEWER_PORT, true); povPort = VIEWER_PORT; }
+    res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    res.end(mode);
+    return;
+  }
   if (req.method === 'POST' && req.url === '/cmd') {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -120,10 +143,25 @@ if (PASSWORD) console.log('PANEL_LOGIN aktiv');
 else console.log('PANEL_LOGIN fehlt (PANEL_PASSWORD nicht gesetzt)');
 
 // Bot starten (bot.js exportiert startBot) + 3D-Ansicht auf internem Port, per /viewer durchgereicht
-const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);
+const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);   // erste Person
+const VIEWER_PORT_3P = Number(process.env.VIEWER_PORT_3P || 40802); // dritte Person
+let povPort = VIEWER_PORT;
+const started = {};
+let botRef = null;
+
+function startViewer (port, firstPerson) {
+  if (started[port]) return;
+  try {
+    require('prismarine-viewer').mineflayer(botRef, { port, firstPerson, prefix: '/viewer', viewDistance: Number(process.env.VIEWER_DISTANCE || 6) });
+    started[port] = true;
+    console.log('VIEWER auf Port ' + port + (firstPerson ? ' (erste Person)' : ' (dritte Person)'));
+  } catch (e) {
+    console.log('VIEWER_FEHLER ' + e.message);
+  }
+}
 
 function proxyViewer (req, res) {
-  const p = http.request({ host: '127.0.0.1', port: VIEWER_PORT, path: req.url, method: req.method, headers: req.headers }, (r) => {
+  const p = http.request({ host: '127.0.0.1', port: povPort, path: req.url, method: req.method, headers: req.headers }, (r) => {
     r.on('error', () => {});
     res.writeHead(r.statusCode || 502, r.headers);
     r.pipe(res);
@@ -137,7 +175,7 @@ function proxyViewer (req, res) {
 server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => {});
   if (!req.url.startsWith('/viewer')) { socket.destroy(); return; }
-  const upstream = require('net').connect(VIEWER_PORT, '127.0.0.1', () => {
+  const upstream = require('net').connect(povPort, '127.0.0.1', () => {
     try {
       const headers = Object.entries(req.headers).map(([k, v]) => k + ': ' + v).join('\r\n');
       upstream.write(req.method + ' ' + req.url + ' HTTP/1.1\r\n' + headers + '\r\n\r\n');
@@ -159,14 +197,9 @@ process.on('unhandledRejection', (e) => console.log('UNHANDLED ' + (e && e.messa
 const startBot = require('./bot.js');
 if (typeof startBot === 'function') {
   const bot = startBot();
-  bot.once('spawn', () => {
-    try {
-      require('prismarine-viewer').mineflayer(bot, { port: VIEWER_PORT, firstPerson: process.env.VIEWER_FIRST_PERSON !== '0', prefix: '/viewer', viewDistance: Number(process.env.VIEWER_DISTANCE || 6) });
-      console.log('VIEWER auf Port ' + VIEWER_PORT + ' (Pfad /viewer)');
-    } catch (e) {
-      console.log('VIEWER_FEHLER ' + e.message);
-    }
-  });
+  botRef = bot;
+  bot.once('spawn', () => startViewer(VIEWER_PORT, process.env.VIEWER_FIRST_PERSON !== '0'));
 }
+
 
 

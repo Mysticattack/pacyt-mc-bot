@@ -95,6 +95,19 @@ function startBot () {
       switch (verb) {
         case 'say': if (args.length) bot.chat(args.join(' ')); break;
         case 'look': bot.look(Number(args[0] || 0), Number(args[1] || 0), true).catch(() => {}); break;
+        case 'lookrel': {
+          // relative Drehung in Grad: lookrel <dyaw> <dpitch>
+          const dy = Number(args[0] || 0) * Math.PI / 180;
+          const dp = Number(args[1] || 0) * Math.PI / 180;
+          const yaw = (bot.entity.yaw || 0) + dy;
+          let pitch = (bot.entity.pitch || 0) + dp;
+          const lim = Math.PI / 2 - 0.01;
+          if (pitch > lim) pitch = lim;
+          if (pitch < -lim) pitch = -lim;
+          bot.look(yaw, pitch, true).catch(() => {});
+          st('LOOKREL yaw=' + yaw.toFixed(3) + ' pitch=' + pitch.toFixed(3));
+          break;
+        }
         case 'pos': { const q = bot.entity.position; st('POS ' + [q.x, q.y, q.z].map(n => n.toFixed(1)).join(',')); break; }
         case 'forward': case 'back': case 'left': case 'right': {
           const secs = Number(args[0] || 1);
