@@ -124,24 +124,37 @@ const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);
 
 function proxyViewer (req, res) {
   const p = http.request({ host: '127.0.0.1', port: VIEWER_PORT, path: req.url, method: req.method, headers: req.headers }, (r) => {
+    r.on('error', () => {});
     res.writeHead(r.statusCode || 502, r.headers);
     r.pipe(res);
   });
-  p.on('error', () => { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Viewer nicht erreichbar'); });
+  p.on('error', () => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Viewer nicht erreichbar'); } catch (e) {} });
+  res.on('error', () => {});
+  req.on('error', () => {});
   req.pipe(p);
 }
 
 server.on('upgrade', (req, socket, head) => {
+  socket.on('error', () => {});
   if (!req.url.startsWith('/viewer')) { socket.destroy(); return; }
   const upstream = require('net').connect(VIEWER_PORT, '127.0.0.1', () => {
-    const headers = Object.entries(req.headers).map(([k, v]) => k + ': ' + v).join('\r\n');
-    upstream.write(req.method + ' ' + req.url + ' HTTP/1.1\r\n' + headers + '\r\n\r\n');
-    if (head && head.length) upstream.write(head);
+    try {
+      const headers = Object.entries(req.headers).map(([k, v]) => k + ': ' + v).join('\r\n');
+      upstream.write(req.method + ' ' + req.url + ' HTTP/1.1\r\n' + headers + '\r\n\r\n');
+      if (head && head.length) upstream.write(head);
+    } catch (e) {}
     upstream.pipe(socket);
     socket.pipe(upstream);
   });
-  upstream.on('error', () => socket.destroy());
+  // EPIPE & Co. duerfen den Bot nicht mitreissen
+  upstream.on('error', () => { try { socket.destroy(); } catch (e) {} });
+  upstream.on('close', () => { try { socket.destroy(); } catch (e) {} });
+  socket.on('close', () => { try { upstream.destroy(); } catch (e) {} });
 });
+
+process.on('uncaughtException', (e) => console.log('UNCAUGHT ' + (e && e.message)));
+process.on('unhandledRejection', (e) => console.log('UNHANDLED ' + (e && e.message)));
+
 
 const startBot = require('./bot.js');
 if (typeof startBot === 'function') {
