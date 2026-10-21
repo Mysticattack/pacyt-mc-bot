@@ -78,6 +78,28 @@ MC_USER="dein@konto.tld" node src/blocks.js
 # -> BLOCKNAMEN [["air",7077],["water",507],["dirt",462],["grass_block",360],...]
 ```
 
+
+## Warum die Session nach einer Minute abbrach
+
+Der Server hat den Client nach etwa einer Minute still getrennt (`END socketClosed`, teils `ECONNRESET`),
+ohne Kick-Paket. Ursache: **der Client hat nie `tick_end` gesendet** — das Paket, mit dem ein moderner
+Client seinen Tick abschliesst. Ohne Tick haelt der Server den Client fuer haengend.
+
+Fix in `src/bot.js`: nach dem Spawn alle 50 ms `client.write('tick_end', {})`. Messung auf pacyt.de:
+ohne `tick_end` Ende nach 48-90 s, mit `tick_end` Laufzeiten von 199 s, 200 s und 240 s (230 Keepalives)
+in drei Laeufen.
+
+Zusatz: `checkTimeoutInterval: 300000` (Client-Watchdog), `player_loaded` einmal, `chunk_batch_received`
+einmal pro Sekunde.
+
+### Kommandos bleiben trotzdem problematisch
+
+`chat_command` (signiert wie unsigniert) beendet die Verbindung: der Server antwortet
+`An internal error occurred in your connection.` — die Paketstruktur fuer Kommandos weicht vom
+Protokollstand in `minecraft-data` ab. Normale Chatnachrichten gehen dagegen durch (`<Name> hallo`).
+Fuer einen Serverwechsel per `/server ...` hilft das nicht; der muss ueber den Weg laufen, den der
+Server anbietet (GUI-Item, NPC oder ein Chat-Menue).
+
 ## Bekannte Grenzen
 
 - **Protokollstand:** Wenn der Server neuer ist als `minecraft-data`, fehlen Weltdaten im Renderer oder

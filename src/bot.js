@@ -20,7 +20,7 @@ const bot = mineflayer.createBot({
   port: Number(process.env.MC_PORT || 25565),
   username: process.env.MC_USER || '',
   auth: 'microsoft',
-  profilesFolder: './auth',
+  profilesFolder: process.env.MC_AUTH_CACHE || './auth',
   authTitle: MC_TITLE,
   deviceType: 'Linux',
   flow: 'live',
@@ -39,9 +39,12 @@ bot.on('spawn', () => {
   st('SPAWN pos=' + [p.x, p.y, p.z].map(n => Math.round(n)).join(',') + ' dim=' + (bot.game && bot.game.dimension));
 
   try { bot._client.write('player_loaded', {}); st('player_loaded gesendet'); } catch (e) { st('PLAYER_LOADED_FEHLER ' + e.message); }
+
+  // Client-Tick: ohne tick_end haelt der Server den Client fuer "haengt" und trennt nach ~1 Minute
+  setInterval(() => { try { bot._client.write('tick_end', {}); } catch (e) {} }, 50);
   const batch = setInterval(() => {
     try { bot._client.write('chunk_batch_received', { chunksPerTick: 7 / 3 }); } catch (e) { clearInterval(batch); }
-  }, 400);
+  }, 1000);
   bot.once('end', () => clearInterval(batch));
 
   // 3D-Ansicht (nur wenn VIEWER_PORT > 0)
@@ -62,7 +65,7 @@ bot.on('spawn', () => {
   const fs = require('fs');
   setInterval(() => {
     try {
-      const raw = fs.readFileSync('./control.json', 'utf8');
+      const raw = fs.readFileSync(process.env.MC_CONTROL_FILE || './control.json', 'utf8');
       const c = JSON.parse(raw);
       if (c.yaw === undefined || c.pitch === undefined) return;
       if (Math.abs((bot.entity.yaw || 0) - c.yaw) < 0.02 && Math.abs((bot.entity.pitch || 0) - c.pitch) < 0.02) return;
