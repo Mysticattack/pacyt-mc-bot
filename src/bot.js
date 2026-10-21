@@ -26,6 +26,10 @@ const FILE_CONTROL = process.env.MC_CONTROL_FILE || path.join(__dirname, 'contro
 const FILE_CMD = process.env.MC_CMD_FILE || path.join(__dirname, 'cmd.txt');
 
 function startBot () {
+  if (!process.env.MC_USER) {
+    st('MC_USER fehlt — in der .env eintragen (z. B. MC_USER=mail@example.com), Bot startet nicht');
+    return null;
+  }
   const bot = mineflayer.createBot({
     host: process.env.MC_HOST || 'pacyt.de',
     port: Number(process.env.MC_PORT || 25565),

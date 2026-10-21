@@ -219,12 +219,28 @@ function ensureDeps () {
 }
 ensureDeps();
 
+// Live-Ansicht braucht das native Modul canvas — nachziehen, falls es nur wegen allow-scripts fehlt
+try { require.resolve('canvas'); } catch (e) {
+  const { execSync } = require('child_process');
+  console.log('CANVAS fehlt, versuche rebuild');
+  for (const cmd of ['npm approve-scripts canvas', 'npm rebuild canvas']) {
+    try { execSync(cmd, { cwd: __dirname, stdio: 'inherit', timeout: 600000 }); } catch (e2) {}
+  }
+  try { require.resolve('canvas'); console.log('CANVAS fertig'); } catch (e3) { console.log('CANVAS_FEHLER (Live-Ansicht bleibt aus, Bedienfeld laeuft)'); }
+}
+
+
 const startBot = require('./bot.js');
 if (typeof startBot === 'function') {
   const bot = startBot();
-  botRef = bot;
-  bot.once('spawn', () => startViewer(VIEWER_PORT, process.env.VIEWER_FIRST_PERSON !== '0'));
+  if (!bot) {
+    console.log('HINWEIS: ohne MC_USER in der .env laeuft nur das Bedienfeld, kein Bot.');
+  } else {
+    botRef = bot;
+    bot.once('spawn', () => startViewer(VIEWER_PORT, process.env.VIEWER_FIRST_PERSON !== '0'));
+  }
 }
+
 
 
 
