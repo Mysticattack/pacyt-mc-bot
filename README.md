@@ -100,6 +100,42 @@ Protokollstand in `minecraft-data` ab. Normale Chatnachrichten gehen dagegen dur
 Fuer einen Serverwechsel per `/server ...` hilft das nicht; der muss ueber den Weg laufen, den der
 Server anbietet (GUI-Item, NPC oder ein Chat-Menue).
 
+
+## Bot steuern
+
+Der Server akzeptiert keine Kommandos von diesem Client (siehe unten), deshalb laeuft die Steuerung
+ueber zwei Dateien im Arbeitsverzeichnis:
+
+- `control.json` — Blickrichtung: `{"yaw":1.9,"pitch":-0.15}` (wird jede Sekunde gelesen)
+- `cmd.txt` — Befehlszeilen, werden im Takt abgearbeitet und die Datei danach geleert
+
+Befehle (eine Zeile pro Aufruf, Hilfsskript `scripts/ctl.sh <befehl> [args]`):
+
+| Befehl | Wirkung |
+| --- | --- |
+| `say <text>` | Chatnachricht senden |
+| `look <yaw> <pitch>` | Blickrichtung setzen |
+| `forward\|back\|left\|right <sek>` | in die Richtung laufen |
+| `jump <sek>` | springen |
+| `up\|down <sek>` | steigen/sinken (Flugmodus) |
+| `pos` | aktuelle Position ins Log |
+| `follow <spieler>` | folgt einem Spieler, haelt 3 Bloecke Abstand |
+| `attack <spieler>` | schlaegt einmal zu |
+| `stop` | alle Bewegungen stoppen |
+
+Beispiel:
+
+```bash
+scripts/ctl.sh pos
+scripts/ctl.sh say "hallo"
+scripts/ctl.sh forward 2
+scripts/ctl.sh follow Steve
+```
+
+Wer mit dem Bot zusammen spielen will, schickt diese Befehle an den Agenten oder setzt sie auf dem Host
+ab. Im Spiel selbst laesst sich der Bot nicht per `/befehl` steuern — normale Chatnachrichten kommen an,
+Kommandos beenden die Verbindung.
+
 ## Bekannte Grenzen
 
 - **Protokollstand:** Wenn der Server neuer ist als `minecraft-data`, fehlen Weltdaten im Renderer oder

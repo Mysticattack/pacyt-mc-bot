@@ -73,6 +73,82 @@ bot.on('spawn', () => {
     } catch (e) { /* keine Steuerdatei */ }
   }, 1500);
 
+  // Kommandodatei: jede Zeile ein Befehl (say/look/forward/back/left/right/jump/up/down/stop/pos/follow/attack)
+  const cmdFile = process.env.MC_CMD_FILE || process.env.MC_CMD_FILE || './cmd.txt';
+  const moveTimers = {};
+  const runCmd = (line) => {
+    const [verb, ...args] = line.trim().split(/\s+/);
+    if (!verb) return;
+    st('EXEC ' + line.trim());
+    const key = (v) => { if (moveTimers[v]) clearTimeout(moveTimers[v]); };
+    switch (verb.toLowerCase()) {
+      case 'say':
+        bot.chat(args.join(' '));
+        break;
+      case 'look':
+        bot.look(Number(args[0] || 0), Number(args[1] || 0), true).catch(() => {});
+        break;
+      case 'pos': {
+        const q = bot.entity.position;
+        st('POS ' + [q.x, q.y, q.z].map(n => n.toFixed(1)).join(','));
+        break;
+      }
+      case 'forward': case 'back': case 'left': case 'right': {
+        const dir = verb.toLowerCase() === 'back' ? 'back' : verb.toLowerCase() === 'left' ? 'left' : verb.toLowerCase() === 'right' ? 'right' : 'forward';
+        const secs = Number(args[0] || 1);
+        bot.setControlState(dir, true);
+        key(dir);
+        moveTimers[dir] = setTimeout(() => bot.setControlState(dir, false), secs * 1000);
+        break;
+      }
+      case 'jump':
+        bot.setControlState('jump', true);
+        key('jump');
+        moveTimers.jump = setTimeout(() => bot.setControlState('jump', false), Number(args[0] || 0.5) * 1000);
+        break;
+      case 'up': case 'down':
+        bot.setControlState(verb.toLowerCase(), true);
+        key(verb.toLowerCase());
+        moveTimers[verb.toLowerCase()] = setTimeout(() => bot.setControlState(verb.toLowerCase(), false), Number(args[0] || 1) * 1000);
+        break;
+      case 'attack': {
+        const target = Object.values(bot.entities).find(e => e.type === 'player' && e.username && args.join(' ') && e.username.toLowerCase() === args.join(' ').toLowerCase());
+        if (target) { bot.attack(target); st('ATTACK ' + target.username); } else st('ATTACK_ZIEL_NICHT_GEFUNDEN');
+        break;
+      }
+      case 'follow': {
+        const name = args.join(' ');
+        if (bot._followTimer) clearInterval(bot._followTimer);
+        bot._followTimer = setInterval(() => {
+          const p = Object.values(bot.entities).find(e => e.type === 'player' && e.username && e.username.toLowerCase() === name.toLowerCase());
+          if (!p) { bot.setControlState('forward', false); return; }
+          const dist = bot.entity.position.distanceTo(p.position);
+          bot.lookAt(p.position.offset(0, 1.6, 0), true).catch(() => {});
+          bot.setControlState('forward', dist > 3);
+          bot.setControlState('jump', dist > 6);
+        }, 500);
+        st('FOLLOW ' + name);
+        break;
+      }
+      case 'stop':
+        ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint', 'up', 'down'].forEach(d => bot.setControlState(d, false));
+        if (bot._followTimer) { clearInterval(bot._followTimer); bot._followTimer = null; }
+        st('STOP');
+        break;
+      default:
+        st('UNBEKANNT ' + verb);
+    }
+  };
+
+  setInterval(() => {
+    try {
+      const raw = require('fs').readFileSync(cmdFile, 'utf8');
+      if (!raw.trim()) return;
+      require('fs').writeFileSync(cmdFile, '');
+      raw.split('\n').filter(l => l.trim()).forEach(runCmd);
+    } catch (e) { /* keine Kommandodatei */ }
+  }, 700);
+
   setTimeout(() => {
     const pitch = Number(process.env.LOOK_PITCH || '-0.15');
     const yaw = Number(process.env.LOOK_YAW || '1.9');
