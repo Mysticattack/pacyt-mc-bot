@@ -1,0 +1,19 @@
+{
+  "name": "pacyt-mc-bot",
+  "version": "1.0.0",
+  "description": "Headless Minecraft bot (mineflayer) with Microsoft device-code login, world-data census and headless 3D view",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "blocks": "node src/blocks.js",
+    "ping": "node src/ping.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.39.0",
+    "minecraft-protocol": "^1.68.0",
+    "minecraft-data": "^3.117.0",
+    "prismarine-auth": "^3.1.1",
+    "prismarine-viewer": "^1.33.0"
+  },
+  "license": "MIT"
+}

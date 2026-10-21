@@ -1,0 +1,17 @@
+# Abhängigkeiten
+node_modules/
+
+# Token-Cache: enthält Refresh-Tokens, niemals committen
+auth/
+auth*/
+*.json.token
+mctoken.txt
+
+# Laufzeitdaten
+*.log
+*.out
+shots/
+control.json
+profile.json
+entitlements.json
+session.json
