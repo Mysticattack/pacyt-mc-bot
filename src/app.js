@@ -108,7 +108,7 @@ input{background:#0e0e0e;border:1px solid #333;color:#eee;border-radius:8px;padd
     <div class="hint">IP oder Hostname, optional Port und Protokollversion.</div>
     <input id="jHost" placeholder="z. B. pacyt.de">
     <input id="jPort" placeholder="Port" value="25565">
-    <input id="jVer" placeholder="Version, z. B. 1.21.8">
+    <input id="jVer" placeholder="Version (leer = automatisch)">
     <button id="jGo">Verbinden</button>
     <div class="hint" id="jStatus"></div>
   </div>
@@ -415,8 +415,15 @@ botApi = require('./bot.js');
 if (botApi && typeof botApi.startBot === 'function') {
   const bot = botApi.startBot();
   if (!bot) {
-    console.log('HINWEIS: ohne MC_USER in der .env laeuft nur das Bedienfeld, kein Bot.');
-  } else {
-    bot.once('spawn', () => startViewer(VIEWER_PORT, process.env.VIEWER_FIRST_PERSON !== '0'));
+    if (!process.env.MC_USER) console.log('HINWEIS: ohne MC_USER in der .env laeuft nur das Bedienfeld, kein Bot.');
+    else console.log('HINWEIS: Version wird ermittelt, Bot startet gleich.');
   }
+  // Live-Ansicht anhaengen, sobald ein Bot existiert (auch nach Neustart/Wechsel)
+  const hooked = new WeakSet();
+  setInterval(() => {
+    const b = botApi && botApi.getBot && botApi.getBot();
+    if (!b || hooked.has(b)) return;
+    hooked.add(b);
+    b.once('spawn', () => startViewer(VIEWER_PORT, process.env.VIEWER_FIRST_PERSON !== '0'));
+  }, 2000);
 }

@@ -20,6 +20,41 @@ pa.Authflow = PatchedAuthflow;
 const mineflayer = require('mineflayer');
 const fs = require('fs');
 const path = require('path');
+const mcProto = require('minecraft-protocol');
+const minecraftData = require('minecraft-data');
+
+// Protokoll des Servers ermitteln und die passende mineflayer-Version waehlen
+function resolveVersionByProtocol (proto) {
+  try {
+    const list = require('minecraft-data/minecraft-data/data/pc/common/versions.json');
+    const candidates = list.map(v => {
+      try { const d = minecraftData(v); return d && d.version ? { v, p: d.version.version } : null; } catch (e) { return null; }
+    }).filter(Boolean);
+    const exact = candidates.filter(c => c.p === proto);
+    if (exact.length) return exact[exact.length - 1].v;
+    const lower = candidates.filter(c => c.p <= proto).sort((a, b) => b.p - a.p)[0];
+    return lower ? lower.v : null;
+  } catch (e) { return null; }
+}
+
+function detectVersion (host, port) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    try {
+      mcProto.ping({ host, port, closeTimeout: 5000 }, (err, res) => {
+        if (err || !res || !res.version) { st('PING fehlgeschlagen: ' + (err && err.message)); return finish(null); }
+        const proto = res.version.protocol;
+        st('PING ' + res.version.name + ' protocol=' + proto);
+        let v = null;
+        try { const d = minecraftData(res.version.name); if (d && d.version && d.version.version === proto) v = res.version.name; } catch (e) {}
+        if (!v) v = resolveVersionByProtocol(proto);
+        finish(v);
+      });
+    } catch (e) { finish(null); }
+    setTimeout(() => finish(null), 7000);
+  });
+}
 
 const st = (m) => console.log('[' + new Date().toISOString().slice(11, 19) + '] ' + m);
 const FILE_CONTROL = process.env.MC_CONTROL_FILE || path.join(__dirname, 'control.json');
@@ -34,14 +69,14 @@ function effective () {
   return {
     host: overrides.host || process.env.MC_HOST || 'pacyt.de',
     port: Number(overrides.port || process.env.MC_PORT || 25565),
-    version: overrides.version || process.env.MC_VERSION || '26.1'
+    version: overrides.version || process.env.MC_VERSION || ''
   };
 }
 
 function join (host, port, version) {
-  overrides = { host, port: Number(port || 25565), version: version || process.env.MC_VERSION || '26.1' };
+  overrides = { host, port: Number(port || 25565), version: version || '' };
   pendingSwitch = true;
-  st('WECHSEL nach ' + overrides.host + ':' + overrides.port + ' (' + overrides.version + ')');
+  st('WECHSEL nach ' + overrides.host + ':' + overrides.port + (overrides.version ? ' (' + overrides.version + ')' : ' (Version automatisch)'));
   if (currentBot) {
     try { currentBot.quit(); } catch (e) { setTimeout(startBot, 1500); }
   } else {
@@ -58,6 +93,17 @@ function startBot () {
   const host = effective().host;
   const port = effective().port;
   const version = effective().version;
+
+  // Version automatisch bestimmen, wenn keine gesetzt ist
+  if (!version) {
+    detectVersion(host, port).then((v) => {
+      overrides.version = v || '1.21.8';
+      st('VERSION automatisch: ' + overrides.version + ' fuer ' + host + ':' + port);
+      startBot();
+    });
+    return null;
+  }
+
   const bot = mineflayer.createBot({
     host,
     port,
