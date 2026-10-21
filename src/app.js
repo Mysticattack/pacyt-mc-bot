@@ -62,65 +62,139 @@ const page = `<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bot-Steuerung</title>
 <style>
-body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px}
-h1{font-size:18px;font-weight:600;margin:0;text-align:center}
-.grid{display:grid;grid-template-columns:repeat(3,74px);grid-template-rows:repeat(3,74px);gap:8px}
-button{font-size:18px;border-radius:10px;border:1px solid #333;background:#1d1d1d;color:#eee;cursor:pointer}
-button:active{background:#2f6f4f}
-.tools{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
-.tools button,.tools a{font-size:14px;padding:10px 14px;color:#eee;text-decoration:none;border:1px solid #333;border-radius:10px;background:#1d1d1d}
-#log{font-family:ui-monospace,monospace;font-size:12px;color:#8a8a8a;max-width:560px;white-space:pre-wrap}
-.panel{display:none;width:min(560px,92vw);border:1px solid #333;border-radius:12px;padding:14px;background:#161616}
+:root{--bg:#0a0c10;--card:#141a21;--card2:#1a222b;--line:#26303b;--txt:#e8eef5;--muted:#8b9aab;--acc:#3ddc84;--acc2:#2bb96e;--danger:#e35d6a}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:radial-gradient(1200px 600px at 50% -10%,#16222c 0%,var(--bg) 55%);color:var(--txt);display:flex;justify-content:center;padding:18px 14px 40px}
+.wrap{width:100%;max-width:760px;display:flex;flex-direction:column;gap:14px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-size:17px;font-weight:650;margin:0;letter-spacing:.2px}
+.sub{font-size:12px;color:var(--muted);margin-top:3px}
+.pill{display:inline-flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 13px;font-size:12.5px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 3px rgba(227,93,106,.15)}
+.dot.on{background:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.16)}
+.card{background:linear-gradient(180deg,var(--card) 0%,#121821 100%);border:1px solid var(--line);border-radius:16px;padding:14px}
+.card h2{font-size:11.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:600}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:300px;margin:0 auto}
+.key{height:64px;border-radius:14px;border:1px solid var(--line);background:var(--card2);color:var(--txt);font-size:19px;font-weight:600;cursor:pointer;transition:transform .06s,background .12s,border-color .12s}
+.key:hover{border-color:#33414f;background:#1f2933}
+.key:active,.key.on{background:var(--acc2);border-color:var(--acc);color:#04140b;transform:translateY(1px)}
+.spacer{visibility:hidden}
+.mouse{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.mbtn{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:var(--card2);color:var(--txt);cursor:pointer;text-align:left;transition:background .12s,border-color .12s}
+.mbtn b{font-size:14px;font-weight:650}
+.mbtn span{font-size:11.5px;color:var(--muted)}
+.mbtn:hover{border-color:#33414f}
+.mbtn:active{background:var(--acc2);border-color:var(--acc);color:#04140b}
+.mbtn:active span{color:#06210f}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.chip{padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--txt);font-size:13.5px;cursor:pointer;text-align:center;transition:background .12s,border-color .12s}
+.chip:hover{border-color:#33414f}
+.chip:active{background:var(--acc2);border-color:var(--acc);color:#04140b}
+.chip.danger{color:#ffb3ba;border-color:#3a2228}
+.chip.danger:hover{background:#2a1a1e}
+.seg{display:inline-flex;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;background:transparent;color:var(--muted);padding:9px 13px;border-radius:9px;font-size:13px;cursor:pointer}
+.seg button.on{background:var(--acc2);color:#04140b;font-weight:600}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+a.link{color:var(--acc);text-decoration:none;font-size:13.5px}
+a.link:hover{text-decoration:underline}
+.panel{display:none;margin-top:12px;border-top:1px solid var(--line);padding-top:12px}
 .panel.open{display:block}
-.row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #222;font-size:14px}
-.row button{font-size:13px;padding:4px 10px}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;align-items:center;justify-content:center;z-index:50}
-.modal .box{background:#181818;border:1px solid #333;border-radius:14px;padding:20px;width:min(420px,92vw);display:flex;flex-direction:column;gap:10px}
-input{background:#0e0e0e;border:1px solid #333;color:#eee;border-radius:8px;padding:10px;font-size:15px}
-.hint{font-size:12px;color:#888}
+.lrow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1d252e;font-size:13.5px}
+.lrow:last-child{border-bottom:0}
+.lrow button{font-size:12.5px;padding:5px 11px;border-radius:9px;border:1px solid var(--line);background:var(--card2);color:var(--txt);cursor:pointer}
+.hint{font-size:12px;color:var(--muted)}
+#log{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11.5px;color:#78899b;min-height:16px;word-break:break-all}
+.modal{position:fixed;inset:0;background:rgba(4,7,10,.72);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:60;padding:16px}
+.modal.open{display:flex}
+.box{width:min(430px,100%);background:linear-gradient(180deg,#161d26,#111821);border:1px solid var(--line);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+.box b{font-size:15px}
+label{font-size:11.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:-6px}
+input{width:100%;background:#0d1319;border:1px solid var(--line);border-radius:11px;padding:12px;color:var(--txt);font-size:15px;outline:none}
+input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
+.go{background:var(--acc2);border:1px solid var(--acc);color:#04140b;font-weight:700;font-size:14.5px;padding:12px;border-radius:12px;cursor:pointer}
+.go:hover{background:var(--acc)}
+.pos{font-variant-numeric:tabular-nums}
+@media(max-width:420px){.key{height:56px}}
 </style></head><body>
-<h1 id="title">Bot-Steuerung</h1>
-<div class="grid">
-  <span></span><button data-act="forward">W</button><span></span>
-  <button data-act="left">A</button><button data-act="back">S</button><button data-act="right">D</button>
-  <span></span><button data-act="jump">Sprung</button><span></span>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 id="title">Bot-Steuerung</h1>
+      <div class="sub" id="pos" class="pos">Position wird geladen ...</div>
+    </div>
+    <div class="pill"><span class="dot" id="dot"></span><span id="conn">nicht verbunden</span></div>
+  </header>
+
+  <div class="card">
+    <h2>Bewegen</h2>
+    <div class="pad">
+      <span class="spacer"></span><button class="key" data-act="forward">W</button><span class="spacer"></span>
+      <button class="key" data-act="left">A</button><button class="key" data-act="back">S</button><button class="key" data-act="right">D</button>
+      <span class="spacer"></span><button class="key" data-act="jump" style="font-size:14px">Sprung</button><span class="spacer"></span>
+    </div>
+    <div class="mouse">
+      <button class="mbtn" id="lmb"><b>Schlagen</b><span>Linksklick — Kreatur, Block oder Arm</span></button>
+      <button class="mbtn" id="rmb"><b>Benutzen / Blocken</b><span>Rechtsklick — halten blockt</span></button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Aktionen</h2>
+    <div class="grid2">
+      <button class="chip" data-act="sneak">Schleichen</button>
+      <button class="chip" data-act="up">Steigen</button>
+      <button class="chip" data-act="down">Sinken</button>
+      <button class="chip danger" id="stop">Stop</button>
+      <button class="chip" id="posBtn">Position</button>
+      <button class="chip" id="say">Sagen</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <h2 style="margin:0">Ansicht</h2>
+      <div class="seg">
+        <button data-pov="first" id="povFirst">F1 erste Person</button>
+        <button data-pov="third" id="povThird">F2 dritte Person</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <a class="link" href="/viewer/" target="_blank">Live-Ansicht öffnen</a>
+      <a class="link" id="joinBtn" href="#">Server wechseln</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="grid2">
+      <button class="chip" id="invBtn">Inventar</button>
+      <button class="chip" id="keysBtn">Tastenbelegung</button>
+    </div>
+    <div id="inv" class="panel"></div>
+    <div id="keys" class="panel"></div>
+  </div>
+
+  <div id="log"></div>
 </div>
-<div class="tools">
-  <button data-act="sneak">Schleichen</button>
-  <button data-act="up">Steigen</button>
-  <button data-act="down">Sinken</button>
-  <button id="stop">Stop</button>
-  <button id="pos">Position</button>
-  <button id="say">Sagen</button>
-  <button id="lmb">Schlagen (LMB)</button>
-  <button id="rmb">Benutzen (RMB)</button>
-  <a href="/viewer" target="_blank">Ansicht</a>
-  <button data-pov="first">F1 erste Person</button>
-  <button data-pov="third">F2 dritte Person</button>
-  <button id="invBtn">Inventar</button>
-  <button id="keysBtn">Tasten</button>
-  <button id="joinBtn">Server wechseln</button>
-</div>
-<div id="inv" class="panel"></div>
-<div id="keys" class="panel"></div>
-<div id="log"></div>
 
 <div class="modal" id="joinModal">
   <div class="box">
-    <b>Server waehlen</b>
-    <div class="hint">IP oder Hostname, optional Port und Protokollversion.</div>
-    <input id="jHost" placeholder="z. B. pacyt.de">
-    <input id="jPort" placeholder="Port" value="25565">
-    <input id="jVer" placeholder="Version (leer = automatisch)">
-    <button id="jGo">Verbinden</button>
+    <b>Server wählen</b>
+    <div class="hint">IP oder Hostname. Version leer lassen heißt automatisch.</div>
+    <label>Server</label><input id="jHost" placeholder="z. B. pacyt.de">
+    <label>Port</label><input id="jPort" placeholder="25565" value="25565">
+    <label>Version</label><input id="jVer" placeholder="automatisch">
+    <button class="go" id="jGo">Verbinden</button>
     <div class="hint" id="jStatus"></div>
   </div>
 </div>
 
 <script>
+const $ = (id) => document.getElementById(id);
 const send = async (text) => {
   const r = await fetch('cmd', { method: 'POST', body: text });
-  document.getElementById('log').textContent = text + ' -> ' + (await r.text());
+  $('log').textContent = text + ' -> ' + (await r.text());
   return r;
 };
 const normKey = (e) => (e.key === ' ' ? ' ' : e.key);
@@ -128,7 +202,11 @@ const TURN = { yawLeft: [1, 0], yawRight: [-1, 0], pitchUp: [0, -1], pitchDown: 
 let KEYS = null;
 let held = {};
 
-const setPov = (mode) => fetch('/pov?mode=' + mode, { cache: 'no-store' }).then(() => { location.href = '/viewer/'; });
+const setPov = (mode) => {
+  fetch('/pov?mode=' + mode, { cache: 'no-store' }).then(() => { location.href = '/viewer/'; });
+  $('povFirst').classList.toggle('on', mode === 'first');
+  $('povThird').classList.toggle('on', mode === 'third');
+};
 
 const actDown = (act) => {
   if (!act || held[act]) return;
@@ -149,35 +227,32 @@ const actUp = (act) => {
 };
 
 document.addEventListener('keydown', (e) => {
-  if (!KEYS) return;
-  if (document.getElementById('joinModal').style.display === 'flex') return;
-  const k = normKey(e);
-  const act = Object.keys(KEYS).find(a => KEYS[a] === k);
+  if (!KEYS || $('joinModal').classList.contains('open')) return;
+  const act = Object.keys(KEYS).find(a => KEYS[a] === normKey(e));
   if (act) { e.preventDefault(); actDown(act); }
 });
 document.addEventListener('keyup', (e) => {
   if (!KEYS) return;
-  const k = normKey(e);
-  const act = Object.keys(KEYS).find(a => KEYS[a] === k);
+  const act = Object.keys(KEYS).find(a => KEYS[a] === normKey(e));
   if (act) actUp(act);
 });
 
 for (const b of document.querySelectorAll('button[data-act]')) {
   const act = b.dataset.act;
-  b.addEventListener('mousedown', () => actDown(act));
-  b.addEventListener('mouseup', () => actUp(act));
-  b.addEventListener('mouseleave', () => actUp(act));
-  b.addEventListener('touchstart', (e) => { e.preventDefault(); actDown(act); }, { passive: false });
-  b.addEventListener('touchend', (e) => { e.preventDefault(); actUp(act); }, { passive: false });
+  b.addEventListener('mousedown', () => { actDown(act); b.classList.add('on'); });
+  b.addEventListener('mouseup', () => { actUp(act); b.classList.remove('on'); });
+  b.addEventListener('mouseleave', () => { actUp(act); b.classList.remove('on'); });
+  b.addEventListener('touchstart', (e) => { e.preventDefault(); actDown(act); b.classList.add('on'); }, { passive: false });
+  b.addEventListener('touchend', (e) => { e.preventDefault(); actUp(act); b.classList.remove('on'); }, { passive: false });
 }
 for (const b of document.querySelectorAll('button[data-pov]')) b.onclick = () => setPov(b.dataset.pov);
-document.getElementById('stop').onclick = () => send('stop');
-document.getElementById('pos').onclick = () => send('pos');
-document.getElementById('say').onclick = () => { const t = prompt('Text:'); if (t) send('say ' + t); };
-document.getElementById('lmb').onclick = () => send('attack');
-document.getElementById('rmb').onclick = () => send('use');
 
-// Maus im Fenster: links schlagen, rechts benutzen/blocken
+$('stop').onclick = () => send('stop');
+$('posBtn').onclick = () => send('pos');
+$('say').onclick = () => { const t = prompt('Text:'); if (t) send('say ' + t); };
+$('lmb').onclick = () => send('attack');
+$('rmb').onclick = () => send('use');
+
 document.addEventListener('contextmenu', (e) => { if (!e.target.closest('button,a,input')) e.preventDefault(); });
 document.addEventListener('mousedown', (e) => {
   if (e.target.closest('button,a,input')) return;
@@ -189,30 +264,31 @@ document.addEventListener('mouseup', (e) => {
   if (e.button === 2) send('usehold 0');
 });
 
-
 const showInv = async () => {
-  const box = document.getElementById('inv');
+  const box = $('inv');
   box.classList.toggle('open');
   if (!box.classList.contains('open')) return;
   const j = await (await fetch('/inventory')).json();
-  const rows = (j.items || []).map(i => '<div class="row"><span>' + i.name + '</span><span>' + i.count + '</span></div>').join('');
-  box.innerHTML = '<b>Inventar</b>' + (rows || '<div class="hint">leer</div>');
+  const rows = (j.items || []).map(i => '<div class="lrow"><span>' + i.name + '</span><span>' + i.count + '</span></div>').join('');
+  box.innerHTML = (rows || '<div class="hint">leer</div>');
 };
-document.getElementById('invBtn').onclick = showInv;
+$('invBtn').onclick = showInv;
 
-const LABELS = { forward:'Vorwaerts', left:'Links', back:'Zurueck', right:'Rechts', jump:'Springen',
+const klabel = (k) => (k === ' ' ? 'Space' : (k || '-'));
+
+const LABELS = { forward:'Vorwärts', left:'Links', back:'Zurück', right:'Rechts', jump:'Springen',
   sneak:'Schleichen', up:'Steigen', down:'Sinken', yawLeft:'Blick links', yawRight:'Blick rechts',
   pitchUp:'Blick hoch', pitchDown:'Blick runter', povFirst:'Erste Person', povThird:'Dritte Person',
   attack:'Schlagen (LMB)', usehold:'Blocken/Benutzen (RMB)' };
 
 const showKeys = async () => {
-  const box = document.getElementById('keys');
+  const box = $('keys');
   box.classList.toggle('open');
   if (!box.classList.contains('open')) return;
   KEYS = await (await fetch('/keys')).json();
-  let html = '<b>Tastenbelegung</b><div class="hint">Zeile anklicken, dann neue Taste druecken.</div>';
+  let html = '<div class="hint" style="margin-bottom:8px">Zeile anklicken, dann neue Taste drücken.</div>';
   for (const act of Object.keys(LABELS)) {
-    html += '<div class="row"><span>' + LABELS[act] + '</span><button class="bind" data-act="' + act + '">' + (KEYS[act] || '-') + '</button></div>';
+    html += '<div class="lrow"><span>' + LABELS[act] + '</span><button class="bind" data-act="' + act + '">' + klabel(KEYS[act]) + '</button></div>';
   }
   box.innerHTML = html;
   for (const btn of box.querySelectorAll('button.bind')) {
@@ -223,39 +299,52 @@ const showKeys = async () => {
         document.removeEventListener('keydown', handler, true);
         KEYS[btn.dataset.act] = normKey(ev);
         await fetch('/keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(KEYS) });
-        btn.textContent = KEYS[btn.dataset.act];
+        btn.textContent = klabel(KEYS[btn.dataset.act]);
       };
       document.addEventListener('keydown', handler, true);
     };
   }
 };
-document.getElementById('keysBtn').onclick = showKeys;
+$('keysBtn').onclick = showKeys;
 
-const modal = document.getElementById('joinModal');
+const modal = $('joinModal');
 const openJoin = async () => {
   const st = await (await fetch('/status')).json();
-  document.getElementById('jHost').value = st.host || '';
-  document.getElementById('jPort').value = st.port || 25565;
-  document.getElementById('jVer').value = st.version || '';
-  document.getElementById('jStatus').textContent = st.connected ? ('verbunden mit ' + st.host + ':' + st.port) : 'nicht verbunden';
-  document.getElementById('title').textContent = 'Bot-Steuerung — ' + (st.host || 'kein Server');
-  modal.style.display = 'flex';
+  $('jHost').value = st.host || '';
+  $('jPort').value = st.port || 25565;
+  $('jVer').value = st.version || '';
+  $('jStatus').textContent = st.connected ? ('verbunden mit ' + st.host + ':' + st.port) : 'nicht verbunden';
+  $('title').textContent = 'Bot-Steuerung';
+  modal.classList.add('open');
 };
-document.getElementById('joinBtn').onclick = openJoin;
-document.getElementById('jGo').onclick = async () => {
-  const host = document.getElementById('jHost').value.trim();
-  const port = Number(document.getElementById('jPort').value || 25565);
-  const version = document.getElementById('jVer').value.trim();
-  if (!host) { document.getElementById('jStatus').textContent = 'Host fehlt'; return; }
-  document.getElementById('jStatus').textContent = 'verbinde ...';
+$('joinBtn').onclick = (e) => { e.preventDefault(); openJoin(); };
+$('jGo').onclick = async () => {
+  const host = $('jHost').value.trim();
+  const port = Number($('jPort').value || 25565);
+  const version = $('jVer').value.trim();
+  if (!host) { $('jStatus').textContent = 'Host fehlt'; return; }
+  $('jStatus').textContent = 'verbinde ...';
   const r = await fetch('/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host, port, version }) });
-  document.getElementById('jStatus').textContent = r.ok ? 'Wechsel gestartet' : 'Fehler beim Wechsel';
-  if (r.ok) setTimeout(() => { modal.style.display = 'none'; location.reload(); }, 1500);
+  $('jStatus').textContent = r.ok ? 'Wechsel gestartet' : 'Fehler beim Wechsel';
+  if (r.ok) setTimeout(() => { modal.classList.remove('open'); location.reload(); }, 1500);
 };
 
+// Status alle 5 Sekunden aktualisieren
+const refresh = async () => {
+  try {
+    const st = await (await fetch('/status', { cache: 'no-store' })).json();
+    $('dot').classList.toggle('on', Boolean(st.connected));
+    $('conn').textContent = st.connected ? (st.user + ' auf ' + st.host + ':' + st.port) : 'nicht verbunden';
+    $('pos').textContent = st.pos ? ('Position ' + st.pos.x + ', ' + st.pos.y + ', ' + st.pos.z + (st.version ? ' · ' + st.version : '')) : 'keine Position';
+    $('povFirst').classList.add('on');
+  } catch (e) {}
+};
 fetch('/keys').then(r => r.json()).then(k => { KEYS = k; });
+refresh();
+setInterval(refresh, 5000);
 openJoin();
-</script></body></html>`;
+</script></body></html>`
+
 
 const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);
 const VIEWER_PORT_3P = Number(process.env.VIEWER_PORT_3P || 40802);
