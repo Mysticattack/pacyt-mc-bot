@@ -25,21 +25,49 @@ const st = (m) => console.log('[' + new Date().toISOString().slice(11, 19) + '] 
 const FILE_CONTROL = process.env.MC_CONTROL_FILE || path.join(__dirname, 'control.json');
 const FILE_CMD = process.env.MC_CMD_FILE || path.join(__dirname, 'cmd.txt');
 
+// Laufzeit-Ziel (per /join aenderbar) und aktueller Bot
+let overrides = {};
+let currentBot = null;
+let pendingSwitch = false;
+
+function effective () {
+  return {
+    host: overrides.host || process.env.MC_HOST || 'pacyt.de',
+    port: Number(overrides.port || process.env.MC_PORT || 25565),
+    version: overrides.version || process.env.MC_VERSION || '26.1'
+  };
+}
+
+function join (host, port, version) {
+  overrides = { host, port: Number(port || 25565), version: version || process.env.MC_VERSION || '26.1' };
+  pendingSwitch = true;
+  st('WECHSEL nach ' + overrides.host + ':' + overrides.port + ' (' + overrides.version + ')');
+  if (currentBot) {
+    try { currentBot.quit(); } catch (e) { setTimeout(startBot, 1500); }
+  } else {
+    setTimeout(startBot, 500);
+  }
+  return true;
+}
+
 function startBot () {
   if (!process.env.MC_USER) {
     st('MC_USER fehlt — in der .env eintragen (z. B. MC_USER=mail@example.com), Bot startet nicht');
     return null;
   }
+  const host = effective().host;
+  const port = effective().port;
+  const version = effective().version;
   const bot = mineflayer.createBot({
-    host: process.env.MC_HOST || 'pacyt.de',
-    port: Number(process.env.MC_PORT || 25565),
+    host,
+    port,
     username: process.env.MC_USER || '',
     auth: 'microsoft',
     profilesFolder: process.env.MC_AUTH_CACHE || path.join(__dirname, 'auth'),
     authTitle: MC_TITLE,
     deviceType: 'Linux',
     flow: 'live',
-    version: process.env.MC_VERSION || '26.1',
+    version,
     checkTimeoutInterval: 300000,
     onMsaCode: (d) => console.log('DEVICECODE ' + (d && d.user_code) + ' ' + (d && d.verification_uri))
   });
@@ -189,14 +217,23 @@ function startBot () {
   bot.on('error', (e) => st('ERROR ' + (e && e.message)));
   bot.on('end', (r) => {
     st('END ' + r);
+    currentBot = null;
     if (process.env.MC_RECONNECT !== '0') {
-      st('RECONNECT in 10s');
-      setTimeout(startBot, 10000);
+      const delay = pendingSwitch ? 2000 : 10000;
+      pendingSwitch = false;
+      st('RECONNECT in ' + Math.round(delay / 1000) + 's');
+      setTimeout(startBot, delay);
     }
   });
 
+  currentBot = bot;
   return bot;
 }
 
-module.exports = startBot;
+module.exports = {
+  startBot,
+  join,
+  getBot: () => currentBot,
+  target: () => effective()
+};
 if (require.main === module) startBot();
