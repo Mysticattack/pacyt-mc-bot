@@ -194,6 +194,31 @@ process.on('uncaughtException', (e) => console.log('UNCAUGHT ' + (e && e.message
 process.on('unhandledRejection', (e) => console.log('UNHANDLED ' + (e && e.message)));
 
 
+// Abhaengigkeiten selbst nachziehen, falls node_modules fehlt (z. B. wenn der Startbefehl
+// direkt "node app.js" ist und der Egg-Installer nie lief)
+function ensureDeps () {
+  const need = ['mineflayer', 'minecraft-protocol', 'prismarine-auth'];
+  const missing = need.filter((m) => { try { require.resolve(m); return false; } catch (e) { return true; } });
+  if (!missing.length) return true;
+  console.log('INSTALL fehlende Pakete: ' + missing.join(', '));
+  const { execSync } = require('child_process');
+  try { execSync('npm approve-scripts canvas', { cwd: __dirname, stdio: 'ignore', timeout: 60000 }); } catch (e) {}
+  for (const cmd of ['npm install --no-audit --no-fund', '/usr/local/bin/npm install --no-audit --no-fund']) {
+    try {
+      execSync(cmd, { cwd: __dirname, stdio: 'inherit', timeout: 600000 });
+      console.log('INSTALL fertig');
+      try { require.resolve('canvas'); } catch (e) {
+        try { execSync('npm rebuild canvas', { cwd: __dirname, stdio: 'inherit', timeout: 600000 }); console.log('CANVAS fertig'); } catch (e2) { console.log('CANVAS_FEHLER (Live-Ansicht bleibt aus)'); }
+      }
+      return true;
+    } catch (e) {
+      console.log('INSTALL_FEHLER (' + cmd.split(' ')[0] + ') ' + (e && e.message));
+    }
+  }
+  return false;
+}
+ensureDeps();
+
 const startBot = require('./bot.js');
 if (typeof startBot === 'function') {
   const bot = startBot();
