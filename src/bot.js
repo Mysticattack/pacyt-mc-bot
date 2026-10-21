@@ -217,9 +217,38 @@ function startBot () {
           break;
         }
         case 'attack': {
-          const name = args.join(' ');
-          const target = Object.values(bot.entities).find(e => e.type === 'player' && e.username && e.username.toLowerCase() === name.toLowerCase());
-          if (target) { bot.attack(target); st('ATTACK ' + target.username); } else st('ATTACK_ZIEL_NICHT_GEFUNDEN');
+          // Linksklick: naechste Kreatur/Spieler schlagen, sonst Block in Sicht abbauen, sonst Arm schwingen
+          let target = null;
+          let best = 3.6;
+          for (const e of Object.values(bot.entities)) {
+            if (!e || e === bot.entity || !e.position) continue;
+            if (!['player', 'mob', 'hostile', 'animal'].includes(e.type)) continue;
+            const d = bot.entity.position.distanceTo(e.position);
+            if (d < best) { best = d; target = e; }
+          }
+          if (target) { bot.attack(target); st('ATTACK ' + (target.username || target.name || target.type)); break; }
+          const lookBlock = bot.blockAtCursor(4);
+          if (lookBlock && lookBlock.name !== 'air') { bot.dig(lookBlock).then(() => st('DIG ' + lookBlock.name)).catch(e => st('DIG_FEHLER ' + e.message)); break; }
+          try { bot.swingArm('right'); } catch (e) {}
+          st('SCHLAG ins Leere');
+          break;
+        }
+        case 'use': {
+          // Rechtsklick: Block benutzen, sonst Item benutzen (Schild, Essen, Platzieren)
+          const lookBlock = bot.blockAtCursor(4);
+          if (lookBlock && lookBlock.name !== 'air') {
+            bot.activateBlock(lookBlock).then(() => st('USE_BLOCK ' + lookBlock.name)).catch(e => st('USE_FEHLER ' + e.message));
+            break;
+          }
+          try { bot.activateItem(); setTimeout(() => { try { bot.deactivateItem(); } catch (e) {} }, 250); } catch (e) {}
+          st('USE_ITEM');
+          break;
+        }
+        case 'usehold': {
+          // Rechtsklick halten (Schild blocken), 'usehold 1' bzw. 'usehold 0'
+          const on = String(args[0] || '1') === '1';
+          try { on ? bot.activateItem() : bot.deactivateItem(); } catch (e) {}
+          st('USEHOLD ' + on);
           break;
         }
         case 'follow': {

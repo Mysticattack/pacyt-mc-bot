@@ -43,7 +43,8 @@ const DEFAULT_KEYS = {
   forward: 'w', left: 'a', back: 's', right: 'd', jump: ' ',
   sneak: 'Shift', up: 'q', down: 'e',
   yawLeft: 'ArrowLeft', yawRight: 'ArrowRight', pitchUp: 'ArrowUp', pitchDown: 'ArrowDown',
-  povFirst: 'F1', povThird: 'F2'
+  povFirst: 'F1', povThird: 'F2',
+  attack: 'f', usehold: 'g'
 };
 
 function loadKeys () {
@@ -91,6 +92,8 @@ input{background:#0e0e0e;border:1px solid #333;color:#eee;border-radius:8px;padd
   <button id="stop">Stop</button>
   <button id="pos">Position</button>
   <button id="say">Sagen</button>
+  <button id="lmb">Schlagen (LMB)</button>
+  <button id="rmb">Benutzen (RMB)</button>
   <a href="/viewer" target="_blank">Ansicht</a>
   <button data-pov="first">F1 erste Person</button>
   <button data-pov="third">F2 dritte Person</button>
@@ -133,12 +136,15 @@ const actDown = (act) => {
   if (TURN[act]) { send('lookrel ' + TURN[act][0] + ' ' + TURN[act][1]); return; }
   if (act === 'povFirst') { setPov('first'); return; }
   if (act === 'povThird') { setPov('third'); return; }
+  if (act === 'attack') { send('attack'); return; }
+  if (act === 'usehold') { send('usehold 1'); return; }
   send('set ' + act + ' 1');
 };
 const actUp = (act) => {
   if (!act || !held[act]) return;
   held[act] = 0;
-  if (TURN[act] || act === 'povFirst' || act === 'povThird') return;
+  if (TURN[act] || act === 'povFirst' || act === 'povThird' || act === 'attack') return;
+  if (act === 'usehold') { send('usehold 0'); return; }
   send('set ' + act + ' 0');
 };
 
@@ -168,6 +174,21 @@ for (const b of document.querySelectorAll('button[data-pov]')) b.onclick = () =>
 document.getElementById('stop').onclick = () => send('stop');
 document.getElementById('pos').onclick = () => send('pos');
 document.getElementById('say').onclick = () => { const t = prompt('Text:'); if (t) send('say ' + t); };
+document.getElementById('lmb').onclick = () => send('attack');
+document.getElementById('rmb').onclick = () => send('use');
+
+// Maus im Fenster: links schlagen, rechts benutzen/blocken
+document.addEventListener('contextmenu', (e) => { if (!e.target.closest('button,a,input')) e.preventDefault(); });
+document.addEventListener('mousedown', (e) => {
+  if (e.target.closest('button,a,input')) return;
+  if (e.button === 0) send('attack');
+  if (e.button === 2) send('usehold 1');
+});
+document.addEventListener('mouseup', (e) => {
+  if (e.target.closest('button,a,input')) return;
+  if (e.button === 2) send('usehold 0');
+});
+
 
 const showInv = async () => {
   const box = document.getElementById('inv');
@@ -181,7 +202,8 @@ document.getElementById('invBtn').onclick = showInv;
 
 const LABELS = { forward:'Vorwaerts', left:'Links', back:'Zurueck', right:'Rechts', jump:'Springen',
   sneak:'Schleichen', up:'Steigen', down:'Sinken', yawLeft:'Blick links', yawRight:'Blick rechts',
-  pitchUp:'Blick hoch', pitchDown:'Blick runter', povFirst:'Erste Person', povThird:'Dritte Person' };
+  pitchUp:'Blick hoch', pitchDown:'Blick runter', povFirst:'Erste Person', povThird:'Dritte Person',
+  attack:'Schlagen (LMB)', usehold:'Blocken/Benutzen (RMB)' };
 
 const showKeys = async () => {
   const box = document.getElementById('keys');
