@@ -55,8 +55,12 @@ function startBot () {
     try { bot._client.write('player_loaded', {}); } catch (e) {}
 
     if (first) {
-    setInterval(() => { try { bot._client.write('tick_end', {}); } catch (e) {} }, 50);
+    setInterval(() => {
+      if (bot._client.state !== 'play') return; // waehrend Serverwechsel (Config-Phase) keine Play-Pakete
+      try { bot._client.write('tick_end', {}); } catch (e) {}
+    }, 50);
     const batch = setInterval(() => {
+      if (bot._client.state !== 'play') return;
       try { bot._client.write('chunk_batch_received', { chunksPerTick: 7 / 3 }); } catch (e) { clearInterval(batch); }
     }, 1000);
     bot.once('end', () => clearInterval(batch));

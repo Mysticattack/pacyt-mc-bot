@@ -148,7 +148,7 @@ if (typeof startBot === 'function') {
   const bot = startBot();
   bot.once('spawn', () => {
     try {
-      require('prismarine-viewer').mineflayer(bot, { port: VIEWER_PORT, firstPerson: true, prefix: '/viewer', viewDistance: Number(process.env.VIEWER_DISTANCE || 6) });
+      require('prismarine-viewer').mineflayer(bot, { port: VIEWER_PORT, firstPerson: process.env.VIEWER_FIRST_PERSON !== '0', prefix: '/viewer', viewDistance: Number(process.env.VIEWER_DISTANCE || 6) });
       console.log('VIEWER auf Port ' + VIEWER_PORT + ' (Pfad /viewer)');
     } catch (e) {
       console.log('VIEWER_FEHLER ' + e.message);
