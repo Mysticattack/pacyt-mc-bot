@@ -65,6 +65,7 @@ button:active{background:#2f6f4f}
   <button id="stop">Stop</button>
   <button id="pos">Position</button>
   <button id="say">Sagen</button>
+  <a href="/viewer" target="_blank" style="color:#9ad;align-self:center">3D-Ansicht</a>
 </div>
 <div id="log"></div>
 <script>
@@ -98,6 +99,7 @@ const server = http.createServer((req, res) => {
     res.end('Login erforderlich');
     return;
   }
+  if (req.url.startsWith('/viewer')) { proxyViewer(req, res); return; }
   if (req.method === 'POST' && req.url === '/cmd') {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -117,7 +119,41 @@ server.listen(PORT, '0.0.0.0', () => console.log('PANEL auf Port ' + PORT));
 if (PASSWORD) console.log('PANEL_LOGIN aktiv');
 else console.log('PANEL_LOGIN fehlt (PANEL_PASSWORD nicht gesetzt)');
 
-// Bot starten (bot.js exportiert startBot)
+// Bot starten (bot.js exportiert startBot) + 3D-Ansicht auf internem Port, per /viewer durchgereicht
+const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);
+
+function proxyViewer (req, res) {
+  const p = http.request({ host: '127.0.0.1', port: VIEWER_PORT, path: req.url, method: req.method, headers: req.headers }, (r) => {
+    res.writeHead(r.statusCode || 502, r.headers);
+    r.pipe(res);
+  });
+  p.on('error', () => { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Viewer nicht erreichbar'); });
+  req.pipe(p);
+}
+
+server.on('upgrade', (req, socket, head) => {
+  if (!req.url.startsWith('/viewer')) { socket.destroy(); return; }
+  const upstream = require('net').connect(VIEWER_PORT, '127.0.0.1', () => {
+    const headers = Object.entries(req.headers).map(([k, v]) => k + ': ' + v).join('\r\n');
+    upstream.write(req.method + ' ' + req.url + ' HTTP/1.1\r\n' + headers + '\r\n\r\n');
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  upstream.on('error', () => socket.destroy());
+});
+
 const startBot = require('./bot.js');
-if (typeof startBot === 'function') startBot();
+if (typeof startBot === 'function') {
+  const bot = startBot();
+  bot.once('spawn', () => {
+    try {
+      require('prismarine-viewer').mineflayer(bot, { port: VIEWER_PORT, firstPerson: true, prefix: '/viewer', viewDistance: Number(process.env.VIEWER_DISTANCE || 6) });
+      console.log('VIEWER auf Port ' + VIEWER_PORT + ' (Pfad /viewer)');
+    } catch (e) {
+      console.log('VIEWER_FEHLER ' + e.message);
+    }
+  });
+}
+
 

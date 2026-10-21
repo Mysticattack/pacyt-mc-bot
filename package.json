@@ -13,7 +13,8 @@
     "minecraft-protocol": "^1.68.0",
     "minecraft-data": "^3.117.0",
     "prismarine-auth": "^3.1.1",
-    "prismarine-viewer": "^1.33.0"
+    "prismarine-viewer": "^1.33.0",
+    "canvas": "^3.2.3"
   },
   "license": "MIT"
 }
