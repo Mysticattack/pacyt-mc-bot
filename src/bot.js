@@ -43,10 +43,18 @@ function startBot () {
   bot.on('login', () => st('LOGIN_OK als ' + bot.username));
 
   bot.on('spawn', () => {
+    bot._spawns = (bot._spawns || 0) + 1;
+    const first = bot._spawns === 1;
     const p = bot.entity.position;
-    st('SPAWN pos=' + [p.x, p.y, p.z].map(n => Math.round(n)).join(',') + ' dim=' + (bot.game && bot.game.dimension));
+    if (first) {
+      st('SPAWN pos=' + [p.x, p.y, p.z].map(n => Math.round(n)).join(',') + ' dim=' + (bot.game && bot.game.dimension));
+    } else {
+      st('SERVER_WECHSEL #' + bot._spawns + ' pos=' + [p.x, p.y, p.z].map(n => Math.round(n)).join(',') + ' dim=' + (bot.game && bot.game.dimension));
+    }
 
     try { bot._client.write('player_loaded', {}); } catch (e) {}
+
+    if (first) {
     setInterval(() => { try { bot._client.write('tick_end', {}); } catch (e) {} }, 50);
     const batch = setInterval(() => {
       try { bot._client.write('chunk_batch_received', { chunksPerTick: 7 / 3 }); } catch (e) { clearInterval(batch); }
@@ -141,17 +149,21 @@ function startBot () {
         raw.split('\n').filter(l => l.trim()).forEach(runCmd);
       } catch (e) {}
     }, 700);
+    } // Ende der Einmal-Einrichtung (ueberlebt Serverwechsel)
 
+    // nach jedem Spawn (auch nach Serverwechsel) neu ausrichten
     setTimeout(() => {
+      if (!bot.entity) return;
       const pitch = Number(process.env.LOOK_PITCH || '-0.15');
       const yaw = Number(process.env.LOOK_YAW || '1.9');
       bot.look(yaw, pitch, true).then(() => st('LOOK ok pitch=' + pitch + ' yaw=' + yaw)).catch(() => {});
       const under = bot.blockAt(bot.entity.position.offset(0, -1, 0));
       st('BLOCK_UNDER ' + (under && under.name));
-    }, 12000);
+    }, first ? 12000 : 6000);
   });
 
   bot.on('message', (m) => st('CHAT ' + m.toString().slice(0, 200)));
+  bot.on('respawn', () => st('RESPAWN dim=' + (bot.game && bot.game.dimension)));
   bot.on('kicked', (r) => st('KICKED ' + JSON.stringify(r).slice(0, 240)));
   bot.on('error', (e) => st('ERROR ' + (e && e.message)));
   bot.on('end', (r) => {
