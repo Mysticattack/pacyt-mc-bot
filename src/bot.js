@@ -97,8 +97,17 @@ function startBot () {
   // Version automatisch bestimmen, wenn keine gesetzt ist
   if (!version) {
     detectVersion(host, port).then((v) => {
-      overrides.version = v || '1.21.8';
-      st('VERSION automatisch: ' + overrides.version + ' fuer ' + host + ':' + port);
+      const detected = v || '1.21.8';
+      overrides.detected = detected;
+      try { overrides.detectedProtocol = minecraftData(detected).version.version; } catch (e) { overrides.detectedProtocol = 0; }
+      // Renderer kann nur aeltere Chunks lesen -> fuer die Live-Ansicht eine aeltere Version nehmen
+      if (process.env.MC_RENDER !== '0' && overrides.detectedProtocol > 772) {
+        overrides.version = '1.21.8';
+        st('VERSION automatisch: ' + detected + ' (Protokoll ' + overrides.detectedProtocol + '), fuer die Ansicht verbinde ich als 1.21.8');
+      } else {
+        overrides.version = detected;
+        st('VERSION automatisch: ' + detected + ' fuer ' + host + ':' + port);
+      }
       startBot();
     });
     return null;
@@ -259,7 +268,15 @@ function startBot () {
 
   bot.on('message', (m) => st('CHAT ' + m.toString().slice(0, 200)));
   bot.on('respawn', () => st('RESPAWN dim=' + (bot.game && bot.game.dimension)));
-  bot.on('kicked', (r) => st('KICKED ' + JSON.stringify(r).slice(0, 240)));
+  bot.on('kicked', (r) => {
+    st('KICKED ' + JSON.stringify(r).slice(0, 240));
+    // Falls fuer die Live-Ansicht heruntergesetzt wurde und der Server das ablehnt: exakte Version nehmen
+    if (overrides.detected && overrides.version !== overrides.detected) {
+      st('FALLBACK auf ' + overrides.detected + ' (dann ohne Live-Ansicht)');
+      overrides.version = overrides.detected;
+      pendingSwitch = true;
+    }
+  });
   bot.on('error', (e) => st('ERROR ' + (e && e.message)));
   bot.on('end', (r) => {
     st('END ' + r);
