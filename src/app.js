@@ -377,6 +377,51 @@ function proxyViewer (req, res) {
   req.pipe(p);
 }
 
+const zlib = require('zlib');
+const CACHE_DIR = process.env.VIEWER_CACHE_DIR || '/tmp/viewer-cache';
+
+// Grosse Viewer-Bundles einmal holen und gzip-gepackt ausliefern (worker.js ist roh ~63 MB)
+function cachedPath (urlPath) {
+  try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch (e) {}
+  return path.join(CACHE_DIR, urlPath.replace(/[^a-zA-Z0-9._-]/g, '_') + '.gz');
+}
+
+function sendPacked (req, res, urlPath) {
+  const acceptsGzip = String(req.headers['accept-encoding'] || '').includes('gzip');
+  if (!acceptsGzip) { proxyViewer(req, res); return; }
+  const file = cachedPath(urlPath);
+  const serve = () => {
+    try {
+      const size = fs.statSync(file).size;
+      if (req.headers['if-none-match'] === '"' + size + '"') { res.writeHead(304); res.end(); return; }
+      res.writeHead(200, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Content-Encoding': 'gzip',
+        'Content-Length': size,
+        'Cache-Control': 'public, max-age=86400',
+        ETag: '"' + size + '"'
+      });
+      fs.createReadStream(file).on('error', () => { try { res.end(); } catch (e) {} }).pipe(res);
+    } catch (e) { proxyViewer(req, res); }
+  };
+  if (fs.existsSync(file)) { serve(); return; }
+  const up = http.get({ host: '127.0.0.1', port: povPort, path: urlPath, headers: { 'accept-encoding': 'identity' } }, (r) => {
+    const chunks = [];
+    r.on('data', (c) => chunks.push(c));
+    r.on('end', () => {
+      if (r.statusCode !== 200) { proxyViewer(req, res); return; }
+      try {
+        const gz = zlib.gzipSync(Buffer.concat(chunks), { level: 6 });
+        fs.writeFileSync(file, gz);
+        console.log('VIEWER_CACHE ' + urlPath + ' ' + gz.length + ' bytes gepackt');
+        serve();
+      } catch (e) { proxyViewer(req, res); }
+    });
+    r.on('error', () => proxyViewer(req, res));
+  });
+  up.on('error', () => proxyViewer(req, res));
+}
+
 const server = http.createServer((req, res) => {
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
   if (!authorised(req)) {
@@ -384,7 +429,12 @@ const server = http.createServer((req, res) => {
     res.end('Login erforderlich');
     return;
   }
-  if (req.url.startsWith('/viewer')) { proxyViewer(req, res); return; }
+  if (req.url.startsWith('/viewer')) {
+    const clean = req.url.split('?')[0];
+    if (/^\/viewer\/(worker|index)\.js$/.test(clean)) { sendPacked(req, res, clean); return; }
+    proxyViewer(req, res);
+    return;
+  }
 
   if (req.url.startsWith('/pov')) {
     const mode = (req.url.split('mode=')[1] || 'first').trim();
