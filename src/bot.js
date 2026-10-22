@@ -37,6 +37,14 @@ function resolveVersionByProtocol (proto) {
   } catch (e) { return null; }
 }
 
+function knownVersion (v) {
+  if (!v) return null;
+  try {
+    const d = minecraftData(v);
+    return d && d.version && d.version.version ? v : null;
+  } catch (e) { return null; }
+}
+
 function detectVersion (host, port) {
   return new Promise((resolve) => {
     let done = false;
@@ -64,6 +72,14 @@ const FILE_CMD = process.env.MC_CMD_FILE || path.join(__dirname, 'cmd.txt');
 let overrides = {};
 let currentBot = null;
 let pendingSwitch = false;
+let lastStart = 0;
+let starting = false;
+let reconnectTimer = null;
+
+function scheduleStart (delay) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; startBot(); }, delay);
+}
 
 function effective () {
   return {
@@ -74,25 +90,31 @@ function effective () {
 }
 
 function join (host, port, version) {
-  overrides = { host, port: Number(port || 25565), version: version || '' };
+  let v = version ? knownVersion(String(version).trim()) : null;
+  if (version && !v) st('VERSION_UNBEKANNT ' + version + ' — nehme die automatische');
+  overrides = { host, port: Number(port || 25565), version: v || '' };
   pendingSwitch = true;
   st('WECHSEL nach ' + overrides.host + ':' + overrides.port + (overrides.version ? ' (' + overrides.version + ')' : ' (Version automatisch)'));
   if (currentBot) {
-    try { currentBot.quit(); } catch (e) { setTimeout(startBot, 1500); }
+    try { currentBot.quit(); } catch (e) { currentBot = null; scheduleStart(1500); }
   } else {
-    setTimeout(startBot, 500);
+    scheduleStart(500);
   }
   return true;
 }
 
 function startBot () {
+  if (starting) return currentBot;
+  if (currentBot) return currentBot;
   if (!process.env.MC_USER) {
     st('MC_USER fehlt — in der .env eintragen (z. B. MC_USER=mail@example.com), Bot startet nicht');
     return null;
   }
   const host = effective().host;
   const port = effective().port;
-  const version = effective().version;
+  const wanted = effective().version;
+  const version = knownVersion(wanted) || '';
+  if (wanted && !version) st('VERSION_UNBEKANNT ' + wanted + ' — nehme die automatische');
 
   // Version automatisch bestimmen, wenn keine gesetzt ist
   if (!version) {
@@ -113,7 +135,10 @@ function startBot () {
     return null;
   }
 
-  const bot = mineflayer.createBot({
+  starting = true;
+  let bot;
+  try {
+    bot = mineflayer.createBot({
     host,
     port,
     username: process.env.MC_USER || '',
@@ -126,6 +151,15 @@ function startBot () {
     checkTimeoutInterval: 300000,
     onMsaCode: (d) => console.log('DEVICECODE ' + (d && d.user_code) + ' ' + (d && d.verification_uri))
   });
+  } catch (e) {
+    starting = false;
+    st('START_FEHLER ' + (e && e.message) + ' — naechster Versuch automatisch');
+    overrides.version = '';
+    scheduleStart(4000);
+    return null;
+  }
+  starting = false;
+  lastStart = Date.now();
 
   bot.on('login', () => st('LOGIN_OK als ' + bot.username));
 
@@ -309,18 +343,34 @@ function startBot () {
   bot.on('error', (e) => st('ERROR ' + (e && e.message)));
   bot.on('end', (r) => {
     st('END ' + r);
-    currentBot = null;
+    if (currentBot === bot) currentBot = null;
+    starting = false;
     if (process.env.MC_RECONNECT !== '0') {
       const delay = pendingSwitch ? 2000 : 10000;
       pendingSwitch = false;
       st('RECONNECT in ' + Math.round(delay / 1000) + 's');
-      setTimeout(startBot, delay);
+      scheduleStart(delay);
     }
   });
 
   currentBot = bot;
   return bot;
 }
+
+// Wenn nach 45 s kein Spawn da ist: neu starten, dann ohne feste Version
+setInterval(() => {
+  if (!lastStart) return;
+  if (Date.now() - lastStart < 45000) return;
+  if (starting || reconnectTimer) return;
+  if (currentBot && currentBot.entity) return;
+  if (currentBot && currentBot._client && currentBot._client.state === 'play') return;
+  st('WATCHDOG kein Spawn nach 45s — Neustart mit automatischer Version');
+  overrides.version = '';
+  try { if (currentBot) currentBot.quit(); } catch (e) {}
+  currentBot = null;
+  lastStart = Date.now();
+  startBot();
+}, 15000);
 
 module.exports = {
   startBot,

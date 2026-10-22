@@ -108,13 +108,16 @@ a.link:hover{text-decoration:underline}
 #log{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11.5px;color:#78899b;min-height:16px;word-break:break-all}
 .modal{position:fixed;inset:0;background:rgba(4,7,10,.72);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;z-index:60;padding:16px}
 .modal.open{display:flex}
-.box{width:min(430px,100%);background:linear-gradient(180deg,#161d26,#111821);border:1px solid var(--line);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+.box{position:relative;width:min(430px,100%);background:linear-gradient(180deg,#161d26,#111821);border:1px solid var(--line);border-radius:18px;padding:20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 60px rgba(0,0,0,.55)}
 .box b{font-size:15px}
 label{font-size:11.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:-6px}
 input{width:100%;background:#0d1319;border:1px solid var(--line);border-radius:11px;padding:12px;color:var(--txt);font-size:15px;outline:none}
 input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
 .go{background:var(--acc2);border:1px solid var(--acc);color:#04140b;font-weight:700;font-size:14.5px;padding:12px;border-radius:12px;cursor:pointer}
 .go:hover{background:var(--acc)}
+.x{position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:#0f151c;color:var(--muted);font-size:17px;line-height:1;cursor:pointer}
+.x:hover{color:var(--txt);border-color:#39485a}
+.mhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:34px}
 .pos{font-variant-numeric:tabular-nums}
 @media(max-width:420px){.key{height:56px}}
 </style></head><body>
@@ -180,12 +183,14 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
 
 <div class="modal" id="joinModal">
   <div class="box">
-    <b>Server wählen</b>
+    <div class="mhead"><b>Server wählen</b></div>
+    <button class="x" id="jClose" title="Schließen">×</button>
     <div class="hint">IP oder Hostname. Version leer lassen heißt automatisch.</div>
     <label>Server</label><input id="jHost" placeholder="z. B. pacyt.de">
     <label>Port</label><input id="jPort" placeholder="25565" value="25565">
     <label>Version</label><input id="jVer" placeholder="automatisch">
     <button class="go" id="jGo">Verbinden</button>
+    <button class="chip" id="jCancel">Abbrechen</button>
     <div class="hint" id="jStatus"></div>
   </div>
 </div>
@@ -318,6 +323,12 @@ const openJoin = async () => {
   modal.classList.add('open');
 };
 $('joinBtn').onclick = (e) => { e.preventDefault(); openJoin(); };
+
+const closeJoin = () => modal.classList.remove('open');
+$('jClose').onclick = closeJoin;
+$('jCancel').onclick = closeJoin;
+modal.addEventListener('click', (e) => { if (e.target === modal) closeJoin(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.classList.contains('open')) closeJoin(); });
 $('jGo').onclick = async () => {
   const host = $('jHost').value.trim();
   const port = Number($('jPort').value || 25565);
