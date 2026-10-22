@@ -164,8 +164,7 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
       </div>
     </div>
     <div class="row" style="margin-top:12px">
-      <a class="link" href="/viewer/" target="_blank">Live-Ansicht öffnen</a>
-      <a class="link" href="/v3d" target="_blank">3D-Ansicht (alle Versionen)</a>
+      <a class="link" href="/v3d" target="_blank">Live-Ansicht öffnen</a>
       <a class="link" id="joinBtn" href="#">Server wechseln</a>
     </div>
   </div>
@@ -473,7 +472,7 @@ function build (data) {
     window.__framed = true;
     if (!FIXED) dist = Math.max(10, R / Math.tan((camera.fov * Math.PI) / 360) * 1.05);
   }
-  document.getElementById('info').textContent = 'Version ' + data.version + ' · ' + data.cells.length + ' Bloecke';
+  document.getElementById('info').textContent = 'Version ' + data.version + ' · ' + data.cells.length + ' Bloecke · Position ' + data.center.x + ', ' + data.center.y + ', ' + data.center.z;
 }
 
 async function load () {
@@ -524,7 +523,7 @@ window.__dbg = () => ({
 });
 
 resize(); load(); tick(); setInterval(tick, 50);
-setInterval(load, 5000);
+setInterval(load, 2000);
 </script></body></html>`
 
 const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);
@@ -534,6 +533,7 @@ const startedViewer = {};
 let botApi = null;
 
 function startViewer (port, firstPerson) {
+  if (process.env.MC_OLD_VIEWER !== '1') return;
   if (startedViewer[port]) return;
   const bot = botApi && botApi.getBot && botApi.getBot();
   if (!bot) return;
@@ -662,6 +662,12 @@ const server = http.createServer((req, res) => {
       palette,
       cells
     }));
+    return;
+  }
+
+  if (req.url === '/viewer' || req.url === '/viewer/') {
+    res.writeHead(302, { Location: '/v3d' });
+    res.end();
     return;
   }
 

@@ -80,7 +80,17 @@ const FILE_CONTROL = process.env.MC_CONTROL_FILE || path.join(__dirname, 'contro
 const FILE_CMD = process.env.MC_CMD_FILE || path.join(__dirname, 'cmd.txt');
 
 // Laufzeit-Ziel (per /join aenderbar) und aktueller Bot
-let overrides = {};
+const TARGET_FILE = process.env.MC_TARGET_FILE || path.join(__dirname, 'target.json');
+const PREFS_FILE = process.env.MC_PREFS_FILE || path.join(__dirname, 'prefs.json');
+
+function loadJson (file, fallback) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; }
+}
+function saveJson (file, obj) {
+  try { fs.writeFileSync(file, JSON.stringify(obj)); } catch (e) {}
+}
+
+let overrides = loadJson(TARGET_FILE, {});
 let currentBot = null;
 let pendingSwitch = false;
 let lastStart = 0;
@@ -90,7 +100,9 @@ const learnedVersion = {};   // host -> Version, die der Server verlangt
 const noClamp = {};          // host -> true, wenn Heruntersetzen abgelehnt wurde
 let backoffMs = 0;           // Wartezeit nach Raten-Begrenzung
 let failures = 0;            // Fehlversuche ohne Spawn in Folge
-let preferView = process.env.MC_RENDER !== '0';  // fuer die 3D-Ansicht ggf. aeltere Version nutzen
+let preferView = (loadJson(PREFS_FILE, {}).preferView !== undefined)
+  ? Boolean(loadJson(PREFS_FILE, {}).preferView)
+  : process.env.MC_RENDER !== '0';  // fuer die Ansicht ggf. aeltere Version nutzen
 
 function scheduleStart (delay) {
   if (reconnectTimer) return;
@@ -109,6 +121,7 @@ function join (host, port, version) {
   let v = version ? knownVersion(String(version).trim()) : null;
   if (version && !v) st('VERSION_UNBEKANNT ' + version + ' — nehme die automatische');
   overrides = { host, port: Number(port || 25565), version: v || '' };
+  saveJson(TARGET_FILE, overrides);
   pendingSwitch = true;
   st('WECHSEL nach ' + overrides.host + ':' + overrides.port + (overrides.version ? ' (' + overrides.version + ')' : ' (Version automatisch)'));
   if (currentBot) {
@@ -441,7 +454,7 @@ setInterval(() => {
   startBot();
 }, 15000);
 
-function setPreferView (v) { preferView = Boolean(v); return preferView; }
+function setPreferView (v) { preferView = Boolean(v); saveJson(PREFS_FILE, { preferView }); return preferView; }
 function getPreferView () { return preferView; }
 
 module.exports = {
