@@ -14,7 +14,8 @@
     "minecraft-data": "^3.117.0",
     "prismarine-auth": "^3.1.1",
     "prismarine-viewer": "^1.33.0",
-    "canvas": "^3.2.3"
+    "canvas": "^3.2.3",
+    "three": "^0.169.0"
   },
   "license": "MIT"
 }

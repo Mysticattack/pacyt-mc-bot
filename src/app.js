@@ -165,6 +165,7 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
     </div>
     <div class="row" style="margin-top:12px">
       <a class="link" href="/viewer/" target="_blank">Live-Ansicht öffnen</a>
+      <a class="link" href="/v3d" target="_blank">3D-Ansicht (alle Versionen)</a>
       <a class="link" id="joinBtn" href="#">Server wechseln</a>
     </div>
   </div>
@@ -365,6 +366,167 @@ openJoin();
 </script></body></html>`
 
 
+
+const page3d = `<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>3D-Ansicht</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0a0e13;color:#e8eef5;font-family:ui-sans-serif,system-ui,sans-serif}
+#c{display:block;width:100vw;height:100vh;touch-action:none}
+.hud{position:fixed;left:12px;top:12px;background:rgba(12,18,24,.78);border:1px solid #26303b;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5;backdrop-filter:blur(6px)}
+.hud b{font-size:13px}
+.hint{position:fixed;left:12px;bottom:12px;color:#7d8b9c;font-size:11.5px}
+</style></head><body>
+<canvas id="c"></canvas>
+<div class="hud"><b>3D-Ansicht</b><div id="info">lade ...</div></div>
+<div class="hint">Ziehen dreht, Rad zoomt, Taste R laedt neu</div>
+<script type="module">
+import * as THREE from '/v3d/three.module.js';
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8ec5e8);
+scene.fog = new THREE.Fog(0x8ec5e8, 120, 300);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
+const light = new THREE.DirectionalLight(0xffffff, 1.5); light.position.set(30, 60, 20); scene.add(light);
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+
+const PALETTE = [
+  [/grass_block|grass_path/, 0x6aa84f],
+  [/dirt|coarse_dirt|podzol|mycelium/, 0x8b5a2b],
+  [/stone|andesite|diorite|granite|deepslate|cobble|bedrock|tuff/, 0x8a8a8a],
+  [/sand|sandstone/, 0xe0d3a3],
+  [/water/, 0x3b6fd4],
+  [/lava/, 0xd85a1e],
+  [/log|wood|stem/, 0x7a5230],
+  [/leaves|azalea|vine/, 0x3f7a33],
+  [/planks|crafting_table|chest|barrel|bookshelf/, 0xb08a4f],
+  [/glass/, 0xbfe3ef],
+  [/snow|powder_snow/, 0xf2f7fb],
+  [/ice/, 0xa8d8ef],
+  [/gravel/, 0x9a9187],
+  [/clay/, 0xa5b0bd],
+  [/wool/, 0xdddddd],
+  [/concrete/, 0xcccccc],
+  [/brick/, 0xa5503f],
+  [/terracotta/, 0xa06a4c],
+  [/iron|anvil|rail/, 0xc9cdd3],
+  [/gold/, 0xd9b53f],
+  [/copper/, 0xc2694a],
+  [/diamond|emerald/, 0x59d6c0],
+  [/redstone/, 0xc23b34],
+  [/lamp|lantern|torch|glowstone|shroomlight|sea_lantern/, 0xf6e27a],
+  [/flower|tulip|poppy|dandelion|rose/, 0xe05a7a],
+  [/cactus|bamboo/, 0x4e8f4a],
+  [/netherrack|magma|crimson|warped/, 0x7d3b3b],
+  [/obsidian/, 0x2b2338],
+  [/stained_glass/, 0xb9d6e2]
+];
+
+function hashColor (name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff;
+  const hue = Math.abs(h) % 360;
+  const c = new THREE.Color(); c.setHSL(hue / 360, 0.35, 0.55); return c.getHex();
+}
+
+function colorFor (name) {
+  const n = String(name).replace('minecraft:', '');
+  for (const [re, col] of PALETTE) if (re.test(n)) return col;
+  return hashColor(n);
+}
+
+let mesh = null;
+let center = new THREE.Vector3(0, 0, 0);
+const Q = new URLSearchParams(location.search);
+let yaw = Number(Q.get('yaw') || 0.9), pitch = Number(Q.get('pitch') || 0.6), dist = Number(Q.get('dist') || 22);
+const FIXED = Q.has('pitch') || Q.has('dist');
+
+function build (data) {
+  if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
+  const colors = data.palette.map(colorFor);
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: false });
+  mesh = new THREE.InstancedMesh(geo, mat, data.cells.length);
+  const m = new THREE.Matrix4();
+  const col = new THREE.Color();
+  data.cells.forEach((c, i) => {
+    m.setPosition(data.center.x + c[0], data.center.y + c[1], data.center.z + c[2]);
+    mesh.setMatrixAt(i, m);
+    col.setHex(colors[c[3]]);
+    mesh.setColorAt(i, col);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  scene.add(mesh);
+  // Schwerpunkt der Bloecke (dichte Masse) statt Bounding-Box-Mitte
+  let sx = 0, sy = 0, sz = 0;
+  data.cells.forEach((c) => { sx += c[0]; sy += c[1]; sz += c[2]; });
+  const n = Math.max(1, data.cells.length);
+  const mx = sx / n, my = sy / n, mz = sz / n;
+  const dists = data.cells.map((c) => Math.hypot(c[0] - mx, c[1] - my, c[2] - mz)).sort((a2, b2) => a2 - b2);
+  const R = dists[Math.floor(dists.length * 0.9)] || 10;
+  center.set(data.center.x + mx, data.center.y + my, data.center.z + mz);
+  if (!window.__framed) {
+    window.__framed = true;
+    if (!FIXED) dist = Math.max(10, R / Math.tan((camera.fov * Math.PI) / 360) * 1.05);
+  }
+  document.getElementById('info').textContent = 'Version ' + data.version + ' · ' + data.cells.length + ' Bloecke';
+}
+
+async function load () {
+  try {
+    const r = await fetch('/view3d.json?r=12&b=6&t=10', { cache: 'no-store' });
+    const j = await r.json();
+    if (j.error) { document.getElementById('info').textContent = j.error; return; }
+    build(j);
+  } catch (e) { document.getElementById('info').textContent = 'Fehler beim Laden'; }
+}
+
+function resize () {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+let dragging = false, lx = 0, ly = 0;
+canvas.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; });
+addEventListener('pointerup', () => { dragging = false; });
+addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  yaw -= (e.clientX - lx) * 0.01;
+  pitch = Math.max(-0.2, Math.min(1.5, pitch + (e.clientY - ly) * 0.01));
+  lx = e.clientX; ly = e.clientY;
+});
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); dist = Math.max(8, Math.min(140, dist + e.deltaY * 0.05)); }, { passive: false });
+addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') load(); });
+
+function tick () {
+  const cx = center.x + Math.cos(yaw) * Math.cos(pitch) * dist;
+  const cy = center.y + Math.sin(pitch) * dist;
+  const cz = center.z + Math.sin(yaw) * Math.cos(pitch) * dist;
+  camera.position.set(cx, cy, cz);
+  camera.lookAt(center);
+  renderer.render(scene, camera);
+}
+
+window.__dbg = () => ({
+  dist, yaw, pitch,
+  fov: camera.fov, aspect: camera.aspect,
+  cam: camera.position.toArray().map(v => Math.round(v * 10) / 10),
+  center: center.toArray(),
+  count: mesh ? mesh.count : 0,
+  canvas: [canvas.width, canvas.height, innerWidth, innerHeight]
+});
+
+resize(); load(); tick(); setInterval(tick, 50);
+setInterval(load, 5000);
+</script></body></html>`
+
 const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);
 const VIEWER_PORT_3P = Number(process.env.VIEWER_PORT_3P || 40802);
 let povPort = VIEWER_PORT;
@@ -448,6 +610,61 @@ const server = http.createServer((req, res) => {
     res.end('Login erforderlich');
     return;
   }
+  if (req.url.startsWith('/v3d/three.module.js')) {
+    const threePath = path.join(__dirname, 'node_modules', 'three', 'build', 'three.module.js');
+    fs.readFile(threePath, (err, buf) => {
+      if (err) { res.writeHead(404); res.end('three fehlt'); return; }
+      res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=86400' });
+      res.end(buf);
+    });
+    return;
+  }
+
+  if (req.url.startsWith('/v3d')) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(page3d);
+    return;
+  }
+
+  if (req.url.startsWith('/view3d.json')) {
+    const bot = botApi && botApi.getBot && botApi.getBot();
+    if (!bot || !bot.entity) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'kein Bot verbunden' }));
+      return;
+    }
+    const q = require('url').parse(req.url, true).query;
+    const radius = Math.min(Math.max(Number(q.r || 14), 4), 28);
+    const below = Math.min(Math.max(Number(q.b || 6), 0), 24);
+    const above = Math.min(Math.max(Number(q.t || 12), 2), 32);
+    const center = bot.entity.position.floored();
+    const Vec3 = require('vec3').Vec3;
+    const palette = [];
+    const indexOf = new Map();
+    const cells = [];
+    const skip = { air: 1, cave_air: 1, void_air: 1, light: 1 };
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dy = -below; dy <= above; dy++) {
+          let b = null;
+          try { b = bot.blockAt(new Vec3(center.x + dx, center.y + dy, center.z + dz)); } catch (e) { b = null; }
+          if (!b || skip[b.name] || skip[b.name.replace('minecraft:', '')]) continue;
+          let idx = indexOf.get(b.name);
+          if (idx === undefined) { idx = palette.length; indexOf.set(b.name, idx); palette.push(b.name); }
+          cells.push([dx, dy, dz, idx]);
+        }
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({
+      version: bot.version,
+      center: { x: center.x, y: center.y, z: center.z },
+      palette,
+      cells
+    }));
+    return;
+  }
+
   if (req.url.startsWith('/viewer')) {
     const clean = req.url.split('?')[0];
     if (/^\/viewer\/(worker|index)\.js$/.test(clean)) { sendPacked(req, res, clean); return; }
@@ -609,7 +826,7 @@ process.on('uncaughtException', (e) => console.log('UNCAUGHT ' + (e && e.message
 process.on('unhandledRejection', (e) => console.log('UNHANDLED ' + (e && e.message)));
 
 function ensureDeps () {
-  const need = ['mineflayer', 'minecraft-protocol', 'prismarine-auth'];
+  const need = ['mineflayer', 'minecraft-protocol', 'prismarine-auth', 'three'];
   const missing = need.filter((m) => { try { require.resolve(m); return false; } catch (e) { return true; } });
   if (!missing.length) return true;
   console.log('INSTALL fehlende Pakete: ' + missing.join(', '));
