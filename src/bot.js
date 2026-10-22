@@ -37,6 +37,17 @@ function resolveVersionByProtocol (proto) {
   } catch (e) { return null; }
 }
 
+function cmpVersion (a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
 function knownVersion (v) {
   if (!v) return null;
   try {
@@ -75,6 +86,10 @@ let pendingSwitch = false;
 let lastStart = 0;
 let starting = false;
 let reconnectTimer = null;
+const learnedVersion = {};   // host -> Version, die der Server verlangt
+const noClamp = {};          // host -> true, wenn Heruntersetzen abgelehnt wurde
+let backoffMs = 0;           // Wartezeit nach Raten-Begrenzung
+let failures = 0;            // Fehlversuche ohne Spawn in Folge
 
 function scheduleStart (delay) {
   if (reconnectTimer) return;
@@ -122,8 +137,10 @@ function startBot () {
       const detected = v || '1.21.8';
       overrides.detected = detected;
       try { overrides.detectedProtocol = minecraftData(detected).version.version; } catch (e) { overrides.detectedProtocol = 0; }
-      // Renderer kann nur aeltere Chunks lesen -> fuer die Live-Ansicht eine aeltere Version nehmen
-      if (process.env.MC_RENDER !== '0' && overrides.detectedProtocol > 772) {
+      if (learnedVersion[host]) {
+        overrides.version = learnedVersion[host];
+        st('VERSION gelernt: ' + learnedVersion[host] + ' fuer ' + host);
+      } else if (process.env.MC_RENDER !== '0' && overrides.detectedProtocol > 772 && !noClamp[host]) {
         overrides.version = '1.21.8';
         st('VERSION automatisch: ' + detected + ' (Protokoll ' + overrides.detectedProtocol + '), fuer die Ansicht verbinde ich als 1.21.8');
       } else {
@@ -161,9 +178,10 @@ function startBot () {
   starting = false;
   lastStart = Date.now();
 
-  bot.on('login', () => st('LOGIN_OK als ' + bot.username));
+  bot.on('login', () => { backoffMs = 0; st('LOGIN_OK als ' + bot.username); });
 
   bot.on('spawn', () => {
+    failures = 0;
     bot._spawns = (bot._spawns || 0) + 1;
     const first = bot._spawns === 1;
     const p = bot.entity.position;
@@ -332,9 +350,41 @@ function startBot () {
   bot.on('message', (m) => st('CHAT ' + m.toString().slice(0, 200)));
   bot.on('respawn', () => st('RESPAWN dim=' + (bot.game && bot.game.dimension)));
   bot.on('kicked', (r) => {
-    st('KICKED ' + JSON.stringify(r).slice(0, 240));
+    const raw = JSON.stringify(r);
+    st('KICKED ' + raw.slice(0, 240));
+    const text = raw.replace(/\\"/g, '"');
+
+    // Server nennt eine Mindestversion, z. B. "Please use 1.21.11+"
+    const need = /use\s+(\d+\.\d+(?:\.\d+)?)\+/i.exec(text) || /(\d+\.\d+(?:\.\d+)?)\+/.exec(text);
+    if (need && knownVersion(need[1])) {
+      const detected = overrides.detected && knownVersion(overrides.detected) ? overrides.detected : null;
+      const chosen = (detected && cmpVersion(detected, need[1]) >= 0) ? detected : need[1];
+      learnedVersion[host] = chosen;
+      noClamp[host] = true;
+      st('SERVER_VERLANGT ' + need[1] + ' — nehme ' + chosen + ' fuer ' + host);
+      overrides.version = chosen;
+      pendingSwitch = true;
+      return;
+    }
+
+    // Raten-Begrenzung: laenger warten statt sofort neu
+    if (/too fast|try again later|throttl/i.test(text)) {
+      backoffMs = Math.min(Math.max(backoffMs * 2, 30000), 180000);
+      st('RATEN_LIMIT — warte ' + Math.round(backoffMs / 1000) + 's');
+      pendingSwitch = false;
+      return;
+    }
+
+    if (/already connected/i.test(text)) {
+      backoffMs = 20000;
+      st('BEREITS_VERBUNDEN — warte 20s');
+      pendingSwitch = false;
+      return;
+    }
+
     // Falls fuer die Live-Ansicht heruntergesetzt wurde und der Server das ablehnt: exakte Version nehmen
     if (overrides.detected && overrides.version !== overrides.detected) {
+      noClamp[host] = true;
       st('FALLBACK auf ' + overrides.detected + ' (dann ohne Live-Ansicht)');
       overrides.version = overrides.detected;
       pendingSwitch = true;
@@ -343,10 +393,21 @@ function startBot () {
   bot.on('error', (e) => st('ERROR ' + (e && e.message)));
   bot.on('end', (r) => {
     st('END ' + r);
+    if (!bot.entity) failures += 1;
     if (currentBot === bot) currentBot = null;
     starting = false;
+    if (failures >= 5) {
+      const home = process.env.MC_HOST || 'pacyt.de';
+      st('AUFGEGEBEN ' + effective().host + ' nach ' + failures + ' Versuchen — zurueck auf ' + home);
+      overrides = {};
+      failures = 0;
+      backoffMs = 0;
+      scheduleStart(3000);
+      return;
+    }
     if (process.env.MC_RECONNECT !== '0') {
-      const delay = pendingSwitch ? 2000 : 10000;
+      const step = failures > 0 ? Math.min(10000 * Math.pow(2, failures - 1), 60000) : 10000;
+      const delay = pendingSwitch ? 2500 : (backoffMs || step);
       pendingSwitch = false;
       st('RECONNECT in ' + Math.round(delay / 1000) + 's');
       scheduleStart(delay);
@@ -359,13 +420,20 @@ function startBot () {
 
 // Wenn nach 45 s kein Spawn da ist: neu starten, dann ohne feste Version
 setInterval(() => {
+  const host = effective().host;
   if (!lastStart) return;
   if (Date.now() - lastStart < 45000) return;
   if (starting || reconnectTimer) return;
   if (currentBot && currentBot.entity) return;
   if (currentBot && currentBot._client && currentBot._client.state === 'play') return;
-  st('WATCHDOG kein Spawn nach 45s — Neustart mit automatischer Version');
-  overrides.version = '';
+  st('WATCHDOG kein Spawn nach 45s — Neustart');
+  if (learnedVersion[host] && overrides.version === learnedVersion[host]) {
+    st('GELERNTE VERSION ' + learnedVersion[host] + ' klappt nicht — verwerfe sie');
+    delete learnedVersion[host];
+    overrides.version = '';
+  } else {
+    overrides.version = learnedVersion[host] || '';
+  }
   try { if (currentBot) currentBot.quit(); } catch (e) {}
   currentBot = null;
   lastStart = Date.now();
