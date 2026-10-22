@@ -90,6 +90,7 @@ const learnedVersion = {};   // host -> Version, die der Server verlangt
 const noClamp = {};          // host -> true, wenn Heruntersetzen abgelehnt wurde
 let backoffMs = 0;           // Wartezeit nach Raten-Begrenzung
 let failures = 0;            // Fehlversuche ohne Spawn in Folge
+let preferView = process.env.MC_RENDER !== '0';  // fuer die 3D-Ansicht ggf. aeltere Version nutzen
 
 function scheduleStart (delay) {
   if (reconnectTimer) return;
@@ -140,7 +141,7 @@ function startBot () {
       if (learnedVersion[host]) {
         overrides.version = learnedVersion[host];
         st('VERSION gelernt: ' + learnedVersion[host] + ' fuer ' + host);
-      } else if (process.env.MC_RENDER !== '0' && overrides.detectedProtocol > 772 && !noClamp[host]) {
+      } else if (preferView && overrides.detectedProtocol > 772 && !noClamp[host]) {
         overrides.version = '1.21.8';
         st('VERSION automatisch: ' + detected + ' (Protokoll ' + overrides.detectedProtocol + '), fuer die Ansicht verbinde ich als 1.21.8');
       } else {
@@ -440,7 +441,12 @@ setInterval(() => {
   startBot();
 }, 15000);
 
+function setPreferView (v) { preferView = Boolean(v); return preferView; }
+function getPreferView () { return preferView; }
+
 module.exports = {
+  setPreferView,
+  getPreferView,
   startBot,
   join,
   getBot: () => currentBot,

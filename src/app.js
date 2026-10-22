@@ -189,6 +189,9 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
     <label>Server</label><input id="jHost" placeholder="z. B. pacyt.de">
     <label>Port</label><input id="jPort" placeholder="25565" value="25565">
     <label>Version</label><input id="jVer" placeholder="automatisch">
+    <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--txt)">
+      <input type="checkbox" id="jView" style="width:auto;margin:0"> Live-Ansicht bevorzugen (verbindet notfalls eine aeltere Version)
+    </label>
     <button class="go" id="jGo">Verbinden</button>
     <button class="chip" id="jCancel">Abbrechen</button>
     <div class="hint" id="jStatus"></div>
@@ -313,6 +316,11 @@ const showKeys = async () => {
 $('keysBtn').onclick = showKeys;
 
 const modal = $('joinModal');
+fetch('/prefs').then(r => r.json()).then(p => { const c = $('jView'); if (c) c.checked = p.preferView !== false; });
+$('jView').onchange = async () => {
+  const r = await fetch('/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preferView: $('jView').checked }) });
+  $('jStatus').textContent = 'Ansicht-Einstellung gespeichert: ' + (r.ok ? '' : 'Fehler');
+};
 const openJoin = async () => {
   const st = await (await fetch('/status')).json();
   $('jHost').value = st.host || '';
@@ -467,6 +475,52 @@ const server = http.createServer((req, res) => {
       connected: Boolean(bot && bot.entity),
       pos: p ? { x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z) } : null,
       user: bot ? bot.username : null
+    }));
+    return;
+  }
+
+  if (req.url === '/prefs') {
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        try {
+          const j = JSON.parse(body || '{}');
+          if (botApi && botApi.setPreferView) botApi.setPreferView(Boolean(j.preferView));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ preferView: botApi && botApi.getPreferView ? botApi.getPreferView() : null }));
+        } catch (e) { res.writeHead(400); res.end('bad json'); }
+      });
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ preferView: botApi && botApi.getPreferView ? botApi.getPreferView() : true }));
+    return;
+  }
+
+  if (req.url === '/world') {
+    const bot = botApi && botApi.getBot && botApi.getBot();
+    let columns = 0;
+    let sample = null;
+    try {
+      if (bot && bot.world) {
+        const w = bot.world;
+        if (w.columns) columns = Object.keys(w.columns).length;
+        else if (w.sectors) columns = Object.keys(w.sectors).length;
+        let cols = null;
+        try { cols = (typeof w.getColumns === 'function') ? w.getColumns().length : null; } catch (e) {}
+        global.__worldInfo = { allKeys: Object.keys(w), getColumns: cols, colKeys: w.columns ? Object.keys(w.columns).length : null };
+      }
+      if (bot && bot.entity) sample = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+    } catch (e) {}
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({
+      version: bot ? bot.version : null,
+      entity: Boolean(bot && bot.entity),
+      columns,
+      blockUnder: sample ? sample.name : null,
+      viewer: startedViewer,
+      worldInfo: global.__worldInfo || null
     }));
     return;
   }
