@@ -378,12 +378,41 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0a0e13;color:#e8eef5;
 </style></head><body>
 <canvas id="c"></canvas>
 <div class="hud"><b>3D-Ansicht</b><div id="info">lade ...</div></div>
-<div class="hint">Ziehen dreht, Rad zoomt, Taste R laedt neu</div>
+<div class="hint">Ziehen dreht, Rad zoomt, Taste R laedt neu · <a id="gpulink" style="color:#3ddc84" href="#">WebGPU nutzen</a></div>
+<script>
+window.addEventListener('error', (e) => {
+  const i = document.getElementById('info');
+  if (i) i.textContent = 'Fehler: ' + (e.message || 'unbekannt');
+});
+</script>
 <script type="module">
-import * as THREE from '/v3d/three.module.js';
+const QS = new URLSearchParams(location.search);
+const wantGPU = QS.get('gpu') === 'webgpu' || QS.get('gpu') === '1';
+const hasGPU = typeof navigator !== 'undefined' && 'gpu' in navigator && wantGPU;
+const THREE = await import(hasGPU ? '/v3d/three.webgpu.js' : '/v3d/three.module.js');
 
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+let renderer = null;
+let backend = 'WebGL';
+let gpuError = '';
+if (hasGPU) {
+  try {
+    const gpuRenderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+    const ok = await Promise.race([
+      gpuRenderer.init().then(() => true).catch((e) => { gpuError = (e && e.message) ? e.message : String(e); return false; }),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 4000))
+    ]);
+    if (ok === true) { renderer = gpuRenderer; backend = 'WebGPU'; }
+    else { if (!gpuError) gpuError = 'Zeitueberschreitung beim Start'; try { gpuRenderer.dispose && gpuRenderer.dispose(); } catch (e) {} }
+  } catch (e) { gpuError = (e && e.message) ? e.message : String(e); }
+}
+if (!renderer) {
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); backend = 'WebGL'; }
+  catch (e) {
+    document.getElementById('info').textContent = 'Kein 3D-Start moeglich: WebGPU ' + (gpuError || 'nicht verfuegbar') + ', WebGL ' + e.message;
+    throw e;
+  }
+}
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8ec5e8);
@@ -472,7 +501,7 @@ function build (data) {
     window.__framed = true;
     if (!FIXED) dist = Math.max(10, R / Math.tan((camera.fov * Math.PI) / 360) * 1.05);
   }
-  document.getElementById('info').textContent = 'Version ' + data.version + ' · ' + data.cells.length + ' Bloecke · Position ' + data.center.x + ', ' + data.center.y + ', ' + data.center.z;
+  document.getElementById('info').textContent = 'Version ' + data.version + ' · ' + data.cells.length + ' Bloecke · Position ' + data.center.x + ', ' + data.center.y + ', ' + data.center.z + ' · ' + backend + (gpuError ? ' (WebGPU-Fehler: ' + gpuError + ')' : '');
 }
 
 async function load () {
@@ -521,6 +550,10 @@ window.__dbg = () => ({
   count: mesh ? mesh.count : 0,
   canvas: [canvas.width, canvas.height, innerWidth, innerHeight]
 });
+
+const gl = document.getElementById('gpulink');
+if (wantGPU) { gl.textContent = 'zurueck zu WebGL'; gl.href = '/v3d'; }
+else { gl.textContent = ('gpu' in navigator) ? 'WebGPU nutzen' : 'WebGPU nicht verfuegbar'; gl.href = '/v3d?gpu=webgpu'; if (!('gpu' in navigator)) { gl.style.color = '#7d8b9c'; gl.style.pointerEvents = 'none'; } }
 
 resize(); load(); tick(); setInterval(tick, 50);
 setInterval(load, 2000);
@@ -610,8 +643,9 @@ const server = http.createServer((req, res) => {
     res.end('Login erforderlich');
     return;
   }
-  if (req.url.startsWith('/v3d/three.module.js')) {
-    const threePath = path.join(__dirname, 'node_modules', 'three', 'build', 'three.module.js');
+  if (req.url.startsWith('/v3d/three.webgpu.js') || req.url.startsWith('/v3d/three.module.js')) {
+    const file = req.url.startsWith('/v3d/three.webgpu.js') ? 'three.webgpu.js' : 'three.module.js';
+    const threePath = path.join(__dirname, 'node_modules', 'three', 'build', file);
     fs.readFile(threePath, (err, buf) => {
       if (err) { res.writeHead(404); res.end('three fehlt'); return; }
       res.writeHead(200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=86400' });
