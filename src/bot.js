@@ -94,6 +94,10 @@ let overrides = loadJson(TARGET_FILE, {});
 let currentBot = null;
 let pendingSwitch = false;
 let lastStart = 0;
+let onChatLine = null;
+function setChatHook (fn) { onChatLine = fn; }
+const chatLog = [];            // letzte Chat-Zeilen fuer das Bedienfeld
+let walk = null;               // laufendes Ziel (goto)
 let starting = false;
 let reconnectTimer = null;
 const learnedVersion = {};   // host -> Version, die der Server verlangt
@@ -193,6 +197,30 @@ function startBot () {
   lastStart = Date.now();
 
   bot.on('login', () => { backoffMs = 0; st('LOGIN_OK als ' + bot.username); });
+
+  // einfacher Geh-Assistent zu einer Position
+  const walkTimer = setInterval(() => {
+    if (!walk) return;
+    if (!bot.entity) { walk = null; return; }
+    const p = bot.entity.position;
+    const dx = walk.x - p.x;
+    const dz = walk.z - p.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 1.6 || Date.now() > walk.until) {
+      walk = null;
+      try { bot.clearControlStates(); } catch (e) {}
+      st('GOTO angekommen' + (dist >= 1.6 ? ' (Zeit abgelaufen)' : '') + ' pos=' + Math.round(p.x) + ',' + Math.round(p.y) + ',' + Math.round(p.z));
+      return;
+    }
+    try {
+      bot.look(Math.atan2(-dx, -dz), 0, true);
+      bot.setControlState('forward', true);
+      bot.setControlState('sprint', dist > 6);
+      if (bot.entity.onGround && (bot.blockAt(p.offset(Math.sign(dx), 0, 0)).name !== 'air')) bot.setControlState('jump', true);
+    } catch (e) {}
+  }, 250);
+
+  bot.once('end', () => { clearInterval(walkTimer); walk = null; });
 
   bot.on('spawn', () => {
     failures = 0;
@@ -310,6 +338,28 @@ function startBot () {
           st('USE_ITEM');
           break;
         }
+        case 'equip': {
+          const slot = Number(args[0]);
+          const item = bot.inventory.items().find((i) => i.slot === slot);
+          if (!item) { st('EQUIP kein Item auf Slot ' + slot); break; }
+          bot.equip(item, 'hand').then(() => st('EQUIP ' + item.name)).catch((e) => st('EQUIP_FEHLER ' + e.message));
+          break;
+        }
+        case 'drop': {
+          const slot = Number(args[0]);
+          const item = bot.inventory.items().find((i) => i.slot === slot);
+          if (!item) { st('DROP kein Item auf Slot ' + slot); break; }
+          bot.toss(item.type, null, 1).then(() => st('DROP ' + item.name)).catch((e) => st('DROP_FEHLER ' + e.message));
+          break;
+        }
+        case 'goto': {
+          const x = Number(args[0]); const y = Number(args[1]); const z = Number(args[2]);
+          if (!isFinite(x) || !isFinite(z)) { st('GOTO braucht x y z'); break; }
+          walk = { x, y: isFinite(y) ? y : Math.round(bot.entity.position.y), z, until: Date.now() + 60000 };
+          st('GOTO ' + x + ' ' + walk.y + ' ' + z);
+          break;
+        }
+        case 'stopwalk': walk = null; st('STOPWALK'); break;
         case 'usehold': {
           // Rechtsklick halten (Schild blocken), 'usehold 1' bzw. 'usehold 0'
           const on = String(args[0] || '1') === '1';
@@ -361,7 +411,13 @@ function startBot () {
     }, first ? 12000 : 6000);
   });
 
-  bot.on('message', (m) => st('CHAT ' + m.toString().slice(0, 200)));
+  bot.on('message', (m) => {
+    const text = m.toString();
+    st('CHAT ' + text.slice(0, 200));
+    chatLog.push({ t: Date.now(), text: text.slice(0, 300) });
+    if (chatLog.length > 200) chatLog.shift();
+    if (onChatLine) { try { onChatLine(text); } catch (e) {} }
+  });
   bot.on('respawn', () => st('RESPAWN dim=' + (bot.game && bot.game.dimension)));
   bot.on('kicked', (r) => {
     const raw = JSON.stringify(r);
@@ -458,6 +514,8 @@ function setPreferView (v) { preferView = Boolean(v); saveJson(PREFS_FILE, { pre
 function getPreferView () { return preferView; }
 
 module.exports = {
+  getChat: () => chatLog.slice(),
+  setChatHook,
   setPreferView,
   getPreferView,
   startBot,

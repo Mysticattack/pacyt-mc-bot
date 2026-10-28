@@ -58,6 +58,27 @@ function saveKeys (keys) {
   try { fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2)); return true; } catch (e) { return false; }
 }
 
+
+function notifyDiscord (text) {
+  const url = process.env.DISCORD_WEBHOOK;
+  if (!url) return;
+  try {
+    const u = new URL(url);
+    const body = JSON.stringify({ content: String(text).slice(0, 1900) });
+    const lib = u.protocol === 'http:' ? require('http') : require('https');
+    const req2 = lib.request({
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'http:' ? 80 : 443),
+      path: u.pathname + (u.search || ''),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    }, (r2) => { r2.resume(); });
+    req2.on('error', () => {});
+    req2.write(body);
+    req2.end();
+  } catch (e) {}
+}
+
 const page = `<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bot-Steuerung</title>
@@ -119,6 +140,16 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
 .x:hover{color:var(--txt);border-color:#39485a}
 .mhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:34px}
 .pos{font-variant-numeric:tabular-nums}
+.chatlog{max-height:200px;overflow:auto;font-size:12.5px;line-height:1.5;color:#c8d3df;background:#0d1319;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.chatlog div{padding:1px 0}
+.chatin{flex:1}
+.invgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px}
+.invcell{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;background:#0d1319;border:1px solid var(--line);border-radius:10px;padding:7px 3px;cursor:pointer}
+.invcell img{width:32px;height:32px;image-rendering:pixelated}
+.invcell span{font-size:9.5px;color:#9fb0c2;text-align:center;line-height:1.1;word-break:break-all;max-height:22px;overflow:hidden}
+.invcell b{position:absolute;right:4px;bottom:3px;font-size:10px;color:#e8eef5}
+.invcell:hover{border-color:#33414f}
+.invcell .x{position:absolute;left:3px;top:2px;font-size:10px;color:#7d8b9c}
 @media(max-width:420px){.key{height:56px}}
 </style></head><body>
 <div class="wrap">
@@ -153,6 +184,24 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
       <button class="chip" id="posBtn">Position</button>
       <button class="chip" id="say">Sagen</button>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Chat</h2>
+    <div id="chatlog" class="chatlog">lade ...</div>
+    <div class="row" style="margin-top:8px">
+      <input id="chatin" class="chatin" placeholder="Nachricht an den Server">
+      <button class="chip" id="chatsend">Senden</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Wegpunkte</h2>
+    <div class="row">
+      <input id="wpn" class="chatin" placeholder="Name, z. B. Basis">
+      <button class="chip" id="wpsave">Hier merken</button>
+    </div>
+    <div id="wplist" style="margin-top:10px"></div>
   </div>
 
   <div class="card">
@@ -272,15 +321,73 @@ document.addEventListener('mouseup', (e) => {
   if (e.button === 2) send('usehold 0');
 });
 
+const renderInv = async () => {
+  const box = $('inv');
+  if (!box.classList.contains('open')) return;
+  const j = await (await fetch('/inventory', { cache: 'no-store' })).json();
+  const items = (j.items || []);
+  if (!items.length) { box.innerHTML = '<div class="hint">leer</div>'; return; }
+  box.innerHTML = '<div class="invgrid">' + items.map(i =>
+    '<div class="invcell" data-slot="' + i.slot + '" title="' + i.name + ' — Klick: in die Hand, x: wegwerfen">' +
+    '<span class="x" data-drop="' + i.slot + '">x</span>' +
+    '<img src="/icon/' + encodeURIComponent(i.name) + '.png" alt="">' +
+    '<span>' + i.name.replace(/_/g, ' ') + '</span><b>' + i.count + '</b></div>').join('') + '</div>';
+  for (const cell of box.querySelectorAll('.invcell')) {
+    cell.onclick = (e) => {
+      if (e.target.dataset && e.target.dataset.drop) return;
+      send('equip ' + cell.dataset.slot).then(renderInv);
+    };
+  }
+  for (const x of box.querySelectorAll('[data-drop]')) {
+    x.onclick = (e) => { e.stopPropagation(); send('drop ' + x.dataset.drop).then(() => setTimeout(renderInv, 400)); };
+  }
+};
+
 const showInv = async () => {
   const box = $('inv');
   box.classList.toggle('open');
-  if (!box.classList.contains('open')) return;
-  const j = await (await fetch('/inventory')).json();
-  const rows = (j.items || []).map(i => '<div class="lrow"><span>' + i.name + '</span><span>' + i.count + '</span></div>').join('');
-  box.innerHTML = (rows || '<div class="hint">leer</div>');
+  if (box.classList.contains('open')) await renderInv();
 };
 $('invBtn').onclick = showInv;
+
+// Chat
+let chatSeen = 0;
+const loadChat = async () => {
+  try {
+    const j = await (await fetch('/chat', { cache: 'no-store' })).json();
+    const box = $('chatlog');
+    if (!j.lines || !j.lines.length) { box.textContent = 'keine Nachrichten'; return; }
+    box.innerHTML = j.lines.slice(-40).map(l => '<div>' + l.text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])) + '</div>').join('');
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {}
+};
+$('chatsend').onclick = async () => {
+  const v = $('chatin').value.trim();
+  if (!v) return;
+  await fetch('/chat', { method: 'POST', body: v });
+  $('chatin').value = '';
+  setTimeout(loadChat, 400);
+};
+$('chatin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('chatsend').click(); });
+
+// Wegpunkte
+const loadWp = async () => {
+  const j = await (await fetch('/waypoints', { cache: 'no-store' })).json();
+  const box = $('wplist');
+  if (!j.waypoints || !j.waypoints.length) { box.innerHTML = '<div class="hint">noch keine</div>'; return; }
+  box.innerHTML = j.waypoints.map(w =>
+    '<div class="lrow"><span>' + w.name + ' · ' + w.x + ', ' + w.y + ', ' + w.z + '</span>' +
+    '<span><button data-go="' + w.name + '">hin</button> <button data-del="' + w.name + '">löschen</button></span></div>').join('');
+  for (const b of box.querySelectorAll('[data-go]')) b.onclick = () => fetch('/goto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: b.dataset.go }) }).then(() => { $('log').textContent = 'gehe zu ' + b.dataset.go; });
+  for (const b of box.querySelectorAll('[data-del]')) b.onclick = () => fetch('/waypoints', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ delete: b.dataset.del }) }).then(loadWp);
+};
+$('wpsave').onclick = async () => {
+  const name = $('wpn').value.trim();
+  if (!name) return;
+  await fetch('/waypoints', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  $('wpn').value = '';
+  loadWp();
+};
 
 const klabel = (k) => (k === ' ' ? 'Space' : (k || '-'));
 
@@ -360,7 +467,11 @@ const refresh = async () => {
 };
 fetch('/keys').then(r => r.json()).then(k => { KEYS = k; });
 refresh();
+loadChat();
+loadWp();
 setInterval(refresh, 5000);
+setInterval(loadChat, 3000);
+setInterval(() => { if ($('inv').classList.contains('open')) renderInv(); }, 5000);
 openJoin();
 </script></body></html>`
 
@@ -375,9 +486,11 @@ html,body{margin:0;height:100%;overflow:hidden;background:#0a0e13;color:#e8eef5;
 .hud{position:fixed;left:12px;top:12px;background:rgba(12,18,24,.78);border:1px solid #26303b;border-radius:12px;padding:10px 12px;font-size:12.5px;line-height:1.5;backdrop-filter:blur(6px)}
 .hud b{font-size:13px}
 .hint{position:fixed;left:12px;bottom:12px;color:#7d8b9c;font-size:11.5px}
+#shot{margin-top:8px;width:100%;padding:7px 10px;border-radius:9px;border:1px solid #2bb96e;background:#0f1f16;color:#3ddc84;font-size:12px;cursor:pointer}
+#shot:hover{background:#14301f}
 </style></head><body>
 <canvas id="c"></canvas>
-<div class="hud"><b>3D-Ansicht</b><div id="info">lade ...</div></div>
+<div class="hud"><b>3D-Ansicht</b><div id="info">lade ...</div><button id="shot">Foto speichern</button></div>
 <div class="hint">Ziehen dreht, Rad zoomt, Taste R laedt neu · <a id="gpulink" style="color:#3ddc84" href="#">WebGPU nutzen</a></div>
 <script>
 window.addEventListener('error', (e) => {
@@ -554,6 +667,18 @@ window.__dbg = () => ({
 const gl = document.getElementById('gpulink');
 if (wantGPU) { gl.textContent = 'zurueck zu WebGL'; gl.href = '/v3d'; }
 else { gl.textContent = ('gpu' in navigator) ? 'WebGPU nutzen' : 'WebGPU nicht verfuegbar'; gl.href = '/v3d?gpu=webgpu'; if (!('gpu' in navigator)) { gl.style.color = '#7d8b9c'; gl.style.pointerEvents = 'none'; } }
+
+document.getElementById('shot').onclick = () => {
+  try {
+    tick();
+    const a = document.createElement('a');
+    a.download = 'ansicht-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  } catch (e) {
+    document.getElementById('info').textContent = 'Foto fehlgeschlagen: ' + e.message;
+  }
+};
 
 resize(); load(); tick(); setInterval(tick, 50);
 setInterval(load, 2000);
@@ -782,12 +907,152 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url.startsWith('/icon/')) {
+    const raw = decodeURIComponent(req.url.slice('/icon/'.length).split('?')[0]);
+    const name = raw.replace(/[^a-zA-Z0-9_.-]/g, '').replace(/\.png$/i, '');
+    const base = path.join(__dirname, 'node_modules', 'prismarine-viewer', 'public', 'textures');
+    const candidates = [];
+    const variants = [name, name + '_top', name + '_side', name + '_front', name.replace(/_block$/, '_side')];
+    for (const ver of ['1.21.4', '1.21.1', '1.20.1']) {
+      for (const v of variants) {
+        candidates.push(path.join(base, ver, 'items', v + '.png'));
+        candidates.push(path.join(base, ver, 'blocks', v + '.png'));
+      }
+    }
+    const send = (file, i) => {
+      fs.readFile(file, (err, buf) => {
+        if (err) {
+          if (i + 1 < candidates.length) { send(candidates[i + 1], i + 1); return; }
+          res.writeHead(404); res.end('');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' });
+        res.end(buf);
+      });
+    };
+    send(candidates[0], 0);
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/notify') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      notifyDiscord(body || 'Testnachricht');
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(process.env.DISCORD_WEBHOOK ? 'gesendet' : 'kein DISCORD_WEBHOOK gesetzt');
+    });
+    return;
+  }
+
+  if (req.url === '/chat') {
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        const bot = botApi && botApi.getBot && botApi.getBot();
+        const text = String(body).slice(0, 240);
+        if (!bot || !bot.entity) { res.writeHead(409, { 'Content-Type': 'text/plain' }); res.end('nicht verbunden'); return; }
+        try { bot.chat(text); res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('ok'); } catch (e) { res.writeHead(500); res.end('fehler'); }
+      });
+      return;
+    }
+    const lines = (botApi && botApi.getChat) ? botApi.getChat().slice(-60) : [];
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ lines }));
+    return;
+  }
+
+  if (req.url === '/waypoints') {
+    const file = path.join(__dirname, 'waypoints.json');
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        try {
+          const j = JSON.parse(body || '{}');
+          const list = (() => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return []; } })();
+          if (j.delete !== undefined) {
+            const next = list.filter((w) => w.name !== j.delete);
+            fs.writeFileSync(file, JSON.stringify(next, null, 2));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ waypoints: next }));
+            return;
+          }
+          const bot = botApi && botApi.getBot && botApi.getBot();
+          const p = bot && bot.entity ? bot.entity.position : null;
+          const wp = {
+            name: String(j.name || 'punkt').slice(0, 32),
+            x: Math.round(j.x !== undefined ? Number(j.x) : (p ? p.x : 0)),
+            y: Math.round(j.y !== undefined ? Number(j.y) : (p ? p.y : 64)),
+            z: Math.round(j.z !== undefined ? Number(j.z) : (p ? p.z : 0))
+          };
+          const next = list.filter((w) => w.name !== wp.name).concat([wp]);
+          fs.writeFileSync(file, JSON.stringify(next, null, 2));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ waypoints: next, saved: wp }));
+        } catch (e) { res.writeHead(400); res.end('bad json'); }
+      });
+      return;
+    }
+    let list = [];
+    try { list = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ waypoints: list }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/goto') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const j = JSON.parse(body || '{}');
+        const file = path.join(__dirname, 'waypoints.json');
+        let target = j;
+        if (j.name) {
+          const list = (() => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return []; } })();
+          target = list.find((w) => w.name === j.name) || null;
+        }
+        if (!target) { res.writeHead(404); res.end('ziel fehlt'); return; }
+        try { fs.appendFileSync(CMD, 'goto ' + Math.round(target.x) + ' ' + Math.round(target.y) + ' ' + Math.round(target.z) + '\n'); } catch (e) {}
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, target }));
+      } catch (e) { res.writeHead(400); res.end('bad json'); }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && (req.url === '/inventory/equip' || req.url === '/inventory/drop')) {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const j = JSON.parse(body || '{}');
+        const verb = req.url.endsWith('equip') ? 'equip ' : 'drop ';
+        try { fs.appendFileSync(CMD, verb + Number(j.slot) + '\n'); } catch (e) {}
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ok');
+      } catch (e) { res.writeHead(400); res.end('bad json'); }
+    });
+    return;
+  }
+
   if (req.url === '/inventory') {
     const bot = botApi && botApi.getBot && botApi.getBot();
     let items = [];
-    try { items = (bot && bot.inventory ? bot.inventory.items() : []).map(i => ({ slot: i.slot, name: i.name, count: i.count })); } catch (e) {}
+    try {
+      items = (bot && bot.inventory ? bot.inventory.items() : []).map(i => ({ slot: i.slot, name: i.name, count: i.count }));
+    } catch (e) {}
+    let armor = [];
+    try {
+      armor = ['head', 'torso', 'legs', 'feet'].map((slotName) => {
+        const it = bot && bot.inventory ? bot.inventory.slots[bot.inventorySlotFor ? 0 : 0] : null;
+        return { slot: slotName, name: it ? it.name : null };
+      });
+    } catch (e) { armor = []; }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ items }));
+    res.end(JSON.stringify({ items, held: (bot && bot.heldItem) ? bot.heldItem.name : null }));
     return;
   }
 
@@ -895,6 +1160,13 @@ try { require.resolve('canvas'); } catch (e) {
 }
 
 botApi = require('./bot.js');
+if (botApi.setChatHook) {
+  botApi.setChatHook((text) => {
+    if (process.env.DISCORD_WEBHOOK && /CottiGHG|missy/i.test(text) && !/betritt den Server|hat den Server verlassen/i.test(text)) {
+      notifyDiscord('Chat: ' + text.slice(0, 300));
+    }
+  });
+}
 if (botApi && typeof botApi.startBot === 'function') {
   const bot = botApi.startBot();
   if (!bot) {
@@ -908,5 +1180,7 @@ if (botApi && typeof botApi.startBot === 'function') {
     if (!b || hooked.has(b)) return;
     hooked.add(b);
     b.once('spawn', () => startViewer(VIEWER_PORT, process.env.VIEWER_FIRST_PERSON !== '0'));
+    b.on('kicked', (r) => notifyDiscord('Kick: ' + String(JSON.stringify(r)).slice(0, 300)));
+    b.once('end', (r) => notifyDiscord('Verbindung weg: ' + r));
   }, 2000);
 }
