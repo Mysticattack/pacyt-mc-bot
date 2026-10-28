@@ -477,6 +477,8 @@ function startBot () {
           break;
         }
         case 'getwood': {
+          if (global.__mcBusy) { st('BESCHAEFTIGT ' + global.__mcBusy); break; }
+          global.__mcBusy = 'getwood';
           const want = Math.max(1, Math.min(32, Number(args[0] || 4)));
           if (!pf || !bot.pathfinder) { st('GETWOOD braucht den Pathfinder'); break; }
           (async () => {
@@ -484,10 +486,10 @@ function startBot () {
             moves.canDig = false;
             bot.pathfinder.setMovements(moves);
             let gesammelt = 0;
-            for (let runde = 0; runde < 8 && gesammelt < want; runde++) {
+            for (let runde = 0; runde < 14 && gesammelt < want; runde++) {
               const baum = bot.findBlock({
                 matching: (bl) => bl && (bl.name.endsWith('_log') || bl.name.endsWith('_stem')),
-                maxDistance: 40
+                maxDistance: 64
               });
               if (baum) {
                 try {
@@ -504,12 +506,14 @@ function startBot () {
               const p = bot.entity.position;
               const richtungen = [[1, 0], [-1, 0], [0, 1], [0, -1]];
               const d = richtungen[(runde + Math.floor(Math.random() * 4)) % 4];
-              const zx = Math.round(p.x + d[0] * 30);
-              const zz = Math.round(p.z + d[1] * 30);
+              const weit = 40 + runde * 10;
+              const zx = Math.round(p.x + d[0] * weit);
+              const zz = Math.round(p.z + d[1] * weit);
               st('GETWOOD kein Baum in Sicht, laufe nach ' + zx + ',' + zz);
               try { await bot.pathfinder.goto(new pf.goals.GoalNear(zx, Math.round(p.y), zz, 3)); } catch (e) { st('GETWOOD_LAUF ' + (e && e.message)); }
             }
             st('GETWOOD fertig ' + gesammelt + '/' + want);
+            global.__mcBusy = null;
           })();
           break;
         }
@@ -551,20 +555,32 @@ function startBot () {
               }
               if (zaehl('_planks') === 0) { st('CRAFT weder Holz noch Bretter im Inventar'); return; }
               st('CRAFT Bretter: ' + zaehl('_planks'));
-              await tryCraft('stick', 2, null);
-              st('CRAFT Stoebe: ' + bot.inventory.items().filter((i) => i.name === 'stick').reduce((a, i) => a + i.count, 0));
+              const stk = () => bot.inventory.items().filter((i) => i.name === 'stick').reduce((a, i) => a + i.count, 0);
+              if (stk() < 4) await tryCraft('stick', 1, null);
+              st('CRAFT Stoebe: ' + stk());
               let table = bot.findBlock({ matching: reg.blocksByName.crafting_table.id, maxDistance: 8 });
               if (!table) {
                 const ok = await tryCraft('crafting_table', 1, null);
                 st('CRAFT Werkbank gebaut: ' + ok);
                 const it = bot.inventory.items().find((i) => i.name === 'crafting_table');
                 if (it) {
-                  try {
-                    await bot.equip(it, 'hand');
-                    const unten = bot.blockAt(bot.entity.position.offset(1, -1, 0));
-                    await bot.placeBlock(unten, new (require('vec3').Vec3)(0, 1, 0));
-                    st('CRAFT Werkbank platziert');
-                  } catch (e) { st('CRAFT platzieren: ' + e.message); }
+                  const stellen = [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [0, 2]];
+                  let platziert = false;
+                  for (const [dx, dz] of stellen) {
+                    if (platziert) break;
+                    try {
+                      const ziel = bot.entity.position.offset(dx, 0, dz).floored();
+                      const oben = bot.blockAt(ziel);
+                      if (oben && oben.name !== 'air' && oben.diggable) { await bot.dig(oben); }
+                      const unten = bot.blockAt(ziel.offset(0, -1, 0));
+                      if (!unten || unten.name === 'air' || !unten.diggable) continue;
+                      await bot.equip(it, 'hand');
+                      await bot.placeBlock(unten, new (require('vec3').Vec3)(0, 1, 0));
+                      st('CRAFT Werkbank platziert bei ' + ziel.x + ',' + ziel.y + ',' + ziel.z);
+                      platziert = true;
+                    } catch (e) { st('CRAFT platzieren ' + dx + '/' + dz + ': ' + e.message); }
+                  }
+                  if (!platziert) st('CRAFT Werkbank nicht platzierbar');
                 }
                 table = bot.findBlock({ matching: reg.blocksByName.crafting_table.id, maxDistance: 6 }) || null;
               }
@@ -576,6 +592,174 @@ function startBot () {
               if (axt) { try { await bot.equip(axt, 'hand'); st('CRAFT Axt in der Hand'); } catch (e) {} }
               st('CRAFT INV ' + bot.inventory.items().map((i) => i.count + 'x ' + i.name).join(', '));
             } catch (e) { st('CRAFT_FEHLER ' + (e && e.message)); }
+          })();
+          break;
+        }
+        case 'mine': {
+          if (global.__mcBusy) { st('BESCHAEFTIGT ' + global.__mcBusy); break; }
+          global.__mcBusy = 'mine';
+          const was = String(args[0] || 'stone').toLowerCase();
+          const anzahl = Math.max(1, Math.min(64, Number(args[1] || 3)));
+          if (!pf || !bot.pathfinder) { st('MINE braucht den Pathfinder'); break; }
+          (async () => {
+            const moves = new pf.Movements(bot);
+            moves.canDig = false;
+            bot.pathfinder.setMovements(moves);
+            const spitze = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
+            if (spitze) { try { await bot.equip(spitze, 'hand'); st('MINE mit ' + spitze.name); } catch (e) {} }
+            let getroffen = 0;
+            for (let runde = 0; runde < 40 && getroffen < anzahl; runde++) {
+              const block = bot.findBlock({
+                matching: (bl) => bl && bl.name.toLowerCase().includes(was) && !bl.name.includes('stairs') && !bl.name.includes('slab'),
+                maxDistance: 32
+              });
+              if (!block) { st('MINE nichts mit ' + was + ' in Sicht (' + getroffen + '/' + anzahl + ')'); break; }
+              try {
+                await bot.pathfinder.goto(new pf.goals.GoalNear(block.position.x, block.position.y, block.position.z, 2));
+                const frisch = bot.blockAt(block.position);
+                if (!frisch || !frisch.name.toLowerCase().includes(was)) continue;
+                await bot.dig(frisch);
+                getroffen += 1;
+                st('MINE ' + getroffen + '/' + anzahl + ' ' + frisch.name);
+              } catch (e) { st('MINE_FEHLER ' + (e && e.message)); break; }
+            }
+            st('MINE fertig ' + getroffen);
+            global.__mcBusy = null;
+          })();
+          break;
+        }
+        case 'craftstone': {
+          (async () => {
+            const reg = bot.registry;
+            const idOf = (n) => (reg.itemsByName[n] ? reg.itemsByName[n].id : null);
+            const table = bot.findBlock({ matching: reg.blocksByName.crafting_table.id, maxDistance: 8 });
+            const bauen = async (name) => {
+              const id = idOf(name);
+              if (!id) return 0;
+              const recs = (bot.recipesFor(id, null, 1, table || null) || []).filter((r) => !r.requiresTable || table);
+              if (!recs.length) { st('CRAFT2 ' + name + ' kein Rezept mit vorhandenen Sachen'); return 0; }
+              try { await bot.craft(recs[0], 1, recs[0].requiresTable ? table : null); st('CRAFT2 ' + name + ' gebaut'); return 1; }
+              catch (e) { st('CRAFT2_FEHLER ' + name + ' ' + e.message); return 0; }
+            };
+            if (!table) { st('CRAFT2 keine Werkbank in der Naehe'); return; }
+            await bauen('stone_pickaxe');
+            await bauen('stone_axe');
+            await bauen('stone_sword');
+            await bauen('furnace');
+            const p = bot.inventory.items().find((i) => i.name === 'stone_pickaxe');
+            if (p) { try { await bot.equip(p, 'hand'); st('CRAFT2 Steinspitzhacke in der Hand'); } catch (e) {} }
+            st('CRAFT2 INV ' + bot.inventory.items().map((i) => i.count + 'x ' + i.name).join(', '));
+          })();
+          break;
+        }
+        case 'strip': {
+          if (!pf || !bot.pathfinder) { st('STRIP braucht den Pathfinder'); break; }
+          if (global.__mcBusy) { st('BESCHAEFTIGT ' + global.__mcBusy); break; }
+          global.__mcBusy = 'strip';
+          const tiefe = Math.max(2, Math.min(40, Number(args[0] || 12)));
+          (async () => {
+            const vec3 = require('vec3').Vec3;
+            const spitze = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
+            if (spitze) { try { await bot.equip(spitze, 'hand'); } catch (e) {} }
+            const erzDa = () => bot.inventory.items().filter((i) => i.name.includes('raw_iron') || i.name.includes('iron_ore')).reduce((a, i) => a + i.count, 0);
+            for (let t = 0; t < tiefe; t++) {
+              try {
+                let unten = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+                if (!unten || unten.name === 'air') {
+                  let weiter = false;
+                  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    const nb = bot.entity.position.offset(dx, 0, dz).floored();
+                    const obenNb = bot.blockAt(nb);
+                    const untenNb = bot.blockAt(nb.offset(0, -1, 0));
+                    if (obenNb && obenNb.name === 'air' && untenNb && untenNb.name !== 'air') {
+                      const vec3m = require('vec3').Vec3;
+                      try { await bot.pathfinder.goto(new pf.goals.GoalBlock(nb.x, nb.y, nb.z)); weiter = true; } catch (e) {}
+                      break;
+                    }
+                  }
+                  if (!weiter) { st('STRIP Halt bei Tiefe ' + t + ' (Luft unter den Fuessen)'); break; }
+                  unten = bot.blockAt(bot.entity.position.offset(0, -1, 0));
+                  if (!unten || unten.name === 'air') { st('STRIP Halt bei Tiefe ' + t + ' (kein Boden)'); break; }
+                }
+                if (unten.name === 'bedrock' || unten.name === 'water' || unten.name === 'lava') { st('STRIP Halt bei Tiefe ' + t + ' (' + unten.name + ')'); break; }
+                await bot.dig(unten);
+                st('STRIP Tiefe ' + (t + 1) + ' y=' + Math.round(bot.entity.position.y) + ' Erz=' + erzDa());
+              } catch (e) { st('STRIP_FEHLER ' + (e && e.message)); break; }
+              for (let r = 0; r < 12; r++) {
+                const erz = bot.findBlock({ matching: (bl) => bl && (bl.name.includes('iron_ore') || bl.name.includes('deepslate_iron')), maxDistance: 6 });
+                if (!erz) break;
+                try {
+                  await bot.dig(erz);
+                  try { await bot.pathfinder.goto(new pf.goals.GoalBlock(erz.position.x, erz.position.y, erz.position.z)); } catch (e) {}
+                  await bot.waitForTicks(10);
+                  const rest = bot.entities ? Object.values(bot.entities).filter((en) => en.name === 'item' && en.position.distanceTo(erz.position) < 3) : [];
+                  for (const it of rest) { try { await bot.pathfinder.goto(new pf.goals.GoalBlock(Math.floor(it.position.x), Math.floor(it.position.y), Math.floor(it.position.z))); } catch (e) {} }
+                  st('STRIP Eisen ' + erz.name + ' Erz=' + erzDa());
+                } catch (e) { st('STRIP Eisen Fehler: ' + (e && e.message)); break; }
+              }
+            }
+            st('STRIP fertig Erz=' + erzDa());
+            global.__mcBusy = null;
+          })();
+          break;
+        }
+        case 'smelt': {
+          if (global.__mcBusy) { st('BESCHAEFTIGT ' + global.__mcBusy); break; }
+          global.__mcBusy = 'smelt';
+          (async () => {
+            const vec3 = require('vec3').Vec3;
+            try {
+              const roh = bot.inventory.items().filter((i) => i.name.includes('raw_iron'));
+              if (!roh.length) { st('SMELT kein Roheisen im Inventar'); global.__mcBusy = null; return; }
+              let ofen = bot.findBlock({ matching: bot.registry.blocksByName.furnace.id, maxDistance: 8 });
+              if (!ofen) {
+                const it = bot.inventory.items().find((i) => i.name === 'furnace');
+                if (!it) { st('SMELT kein Ofen im Inventar'); global.__mcBusy = null; return; }
+                const stellen = [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [0, 2]];
+                for (const [dx, dz] of stellen) {
+                  if (ofen) break;
+                  try {
+                    const ziel = bot.entity.position.offset(dx, 0, dz).floored();
+                    const oben = bot.blockAt(ziel);
+                    if (oben && oben.name !== 'air' && oben.diggable) await bot.dig(oben);
+                    const unten = bot.blockAt(ziel.offset(0, -1, 0));
+                    if (!unten || unten.name === 'air' || !unten.diggable) continue;
+                    await bot.equip(it, 'hand');
+                    await bot.placeBlock(unten, new vec3(0, 1, 0));
+                    ofen = bot.blockAt(ziel);
+                    st('SMELT Ofen platziert');
+                  } catch (e) { st('SMELT platzieren: ' + e.message); }
+                }
+              }
+              if (!ofen) { st('SMELT Ofen nicht platzierbar'); global.__mcBusy = null; return; }
+              const brenn = bot.inventory.items().find((i) => i.name === 'coal' || i.name === 'charcoal' || i.name.endsWith('_planks') || i.name.endsWith('_log'));
+              if (!brenn) { st('SMELT kein Brennstoff'); global.__mcBusy = null; return; }
+              await bot.openFurnace(ofen);
+              await bot.currentWindow.deposit(bot.currentWindow.slots ? 0 : 0, roh[0].type, null, roh[0].count).catch(() => {});
+              const ofenFenster = bot.currentWindow;
+              const legen = async (item, zielSlot) => {
+                const quelle = ofenFenster.slots.findIndex((sl) => sl && sl.type === item.type);
+                if (quelle < 0) return false;
+                await ofenFenster.moveSlotItem(quelle, zielSlot);
+                return true;
+              };
+              await legen(roh[0], 0);
+              await legen(brenn, 1);
+              st('SMELT laeuft: ' + roh[0].count + 'x ' + roh[0].name + ' mit ' + brenn.name);
+              for (let w = 0; w < 40; w++) {
+                await bot.waitForTicks(20);
+                const fertig = ofenFenster.slots.filter((sl) => sl && sl.name === 'iron_ingot').reduce((a, sl) => a + sl.count, 0);
+                if (fertig > 0 && w % 5 === 0) st('SMELT Eisenbarren im Ofen: ' + fertig);
+                if (fertig > 0 && w > 12) break;
+              }
+              for (let k = 2; k < 5; k++) {
+                const sl = ofenFenster.slots[k];
+                if (sl) { try { await ofenFenster.moveSlotItem(k, 30 + k); } catch (e) {} }
+              }
+              await bot.closeWindow(ofenFenster);
+              st('SMELT INV ' + bot.inventory.items().map((i) => i.count + 'x ' + i.name).join(', '));
+            } catch (e) { st('SMELT_FEHLER ' + (e && e.message)); }
+            global.__mcBusy = null;
           })();
           break;
         }
