@@ -444,6 +444,141 @@ function startBot () {
           setTimeout(() => { if (pendingServer === name) pendingServer = null; }, 40000);
           break;
         }
+        case 'inv': {
+          const items = bot.inventory.items().map((i) => i.count + 'x ' + i.name).join(', ');
+          st('INV ' + (items || 'leer'));
+          break;
+        }
+        case 'chop': {
+          const want = Math.max(1, Math.min(64, Number(args[0] || 4)));
+          if (!pf || !bot.pathfinder) { st('CHOP braucht den Pathfinder'); break; }
+          (async () => {
+            let done = 0;
+            const moves = new pf.Movements(bot);
+            moves.canDig = false;
+            bot.pathfinder.setMovements(moves);
+            while (done < want) {
+              const block = bot.findBlock({
+                matching: (bl) => bl && (bl.name.endsWith('_log') || bl.name.endsWith('_stem')),
+                maxDistance: 48
+              });
+              if (!block) { st('CHOP kein Holz in Sicht (' + done + '/' + want + ')'); break; }
+              try {
+                await bot.pathfinder.goto(new pf.goals.GoalNear(block.position.x, block.position.y, block.position.z, 2));
+                const frisch = bot.blockAt(block.position);
+                if (!frisch || !frisch.name.endsWith('_log')) { continue; }
+                await bot.dig(frisch);
+                done += 1;
+                st('CHOP ' + done + '/' + want + ' ' + frisch.name);
+              } catch (e) { st('CHOP_FEHLER ' + (e && e.message)); break; }
+            }
+            st('CHOP fertig ' + done);
+          })();
+          break;
+        }
+        case 'getwood': {
+          const want = Math.max(1, Math.min(32, Number(args[0] || 4)));
+          if (!pf || !bot.pathfinder) { st('GETWOOD braucht den Pathfinder'); break; }
+          (async () => {
+            const moves = new pf.Movements(bot);
+            moves.canDig = false;
+            bot.pathfinder.setMovements(moves);
+            let gesammelt = 0;
+            for (let runde = 0; runde < 8 && gesammelt < want; runde++) {
+              const baum = bot.findBlock({
+                matching: (bl) => bl && (bl.name.endsWith('_log') || bl.name.endsWith('_stem')),
+                maxDistance: 40
+              });
+              if (baum) {
+                try {
+                  await bot.pathfinder.goto(new pf.goals.GoalNear(baum.position.x, baum.position.y, baum.position.z, 2));
+                  const frisch = bot.blockAt(baum.position);
+                  if (frisch && frisch.name.endsWith('_log')) {
+                    await bot.dig(frisch);
+                    gesammelt += 1;
+                    st('GETWOOD ' + gesammelt + '/' + want + ' ' + frisch.name);
+                  }
+                } catch (e) { st('GETWOOD_FEHLER ' + (e && e.message)); }
+                continue;
+              }
+              const p = bot.entity.position;
+              const richtungen = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+              const d = richtungen[(runde + Math.floor(Math.random() * 4)) % 4];
+              const zx = Math.round(p.x + d[0] * 30);
+              const zz = Math.round(p.z + d[1] * 30);
+              st('GETWOOD kein Baum in Sicht, laufe nach ' + zx + ',' + zz);
+              try { await bot.pathfinder.goto(new pf.goals.GoalNear(zx, Math.round(p.y), zz, 3)); } catch (e) { st('GETWOOD_LAUF ' + (e && e.message)); }
+            }
+            st('GETWOOD fertig ' + gesammelt + '/' + want);
+          })();
+          break;
+        }
+        case 'craftbasic': {
+          (async () => {
+            const reg = bot.registry;
+            const idOf = (n) => (reg.itemsByName[n] ? reg.itemsByName[n].id : null);
+            const zaehl = (suffix) => bot.inventory.items().filter((i) => i.name.endsWith(suffix)).reduce((a, i) => a + i.count, 0);
+            const tryCraft = async (name, times, table) => {
+              const id = idOf(name);
+              if (!id) { st('CRAFT ' + name + ' unbekannt'); return 0; }
+              let gemacht = 0;
+              for (let k = 0; k < times; k++) {
+                let rec = null;
+                try {
+                  const moegliche = bot.recipesFor(id, null, 1, table || null) || [];
+                  rec = moegliche.find((r) => !r.requiresTable || table) || moegliche[0] || null;
+                } catch (e) { rec = null; }
+                if (!rec) {
+                  const alle = (bot.recipesAll(id, null, true) || []).filter((r) => !r.requiresTable || table);
+                  rec = alle[0] || null;
+                }
+                if (!rec) break;
+                try { await bot.craft(rec, 1, rec.requiresTable ? table : null); gemacht += 1; } catch (e) { st('CRAFT_FEHLER ' + name + ' ' + e.message); break; }
+              }
+              return gemacht;
+            };
+            try {
+              const logName = (bot.inventory.items().find((i) => i.name.endsWith('_log') || i.name.endsWith('_stem')) || {}).name;
+              if (logName) {
+                const holz = logName.replace('_log', '').replace('_stem', '');
+                const plankName = holz + '_planks';
+                let n = 0;
+                while (bot.inventory.items().some((i) => i.name === logName) && n < 8) {
+                  const r = await tryCraft(plankName, 1, null);
+                  if (!r) break;
+                  n += 1;
+                }
+              }
+              if (zaehl('_planks') === 0) { st('CRAFT weder Holz noch Bretter im Inventar'); return; }
+              st('CRAFT Bretter: ' + zaehl('_planks'));
+              await tryCraft('stick', 2, null);
+              st('CRAFT Stoebe: ' + bot.inventory.items().filter((i) => i.name === 'stick').reduce((a, i) => a + i.count, 0));
+              let table = bot.findBlock({ matching: reg.blocksByName.crafting_table.id, maxDistance: 8 });
+              if (!table) {
+                const ok = await tryCraft('crafting_table', 1, null);
+                st('CRAFT Werkbank gebaut: ' + ok);
+                const it = bot.inventory.items().find((i) => i.name === 'crafting_table');
+                if (it) {
+                  try {
+                    await bot.equip(it, 'hand');
+                    const unten = bot.blockAt(bot.entity.position.offset(1, -1, 0));
+                    await bot.placeBlock(unten, new (require('vec3').Vec3)(0, 1, 0));
+                    st('CRAFT Werkbank platziert');
+                  } catch (e) { st('CRAFT platzieren: ' + e.message); }
+                }
+                table = bot.findBlock({ matching: reg.blocksByName.crafting_table.id, maxDistance: 6 }) || null;
+              }
+              const pick = await tryCraft('wooden_pickaxe', 1, table);
+              st('CRAFT Holzspitzhacke: ' + pick);
+              const axe = await tryCraft('wooden_axe', 1, table);
+              st('CRAFT Holzaxt: ' + axe);
+              const axt = bot.inventory.items().find((i) => i.name === 'wooden_axe');
+              if (axt) { try { await bot.equip(axt, 'hand'); st('CRAFT Axt in der Hand'); } catch (e) {} }
+              st('CRAFT INV ' + bot.inventory.items().map((i) => i.count + 'x ' + i.name).join(', '));
+            } catch (e) { st('CRAFT_FEHLER ' + (e && e.message)); }
+          })();
+          break;
+        }
         case 'hotbar': {
           const n = Number(args[0]);
           if (!(n >= 0 && n <= 8)) { st('HOTBAR 0-8'); break; }
