@@ -362,6 +362,36 @@ function startBot () {
           break;
         }
         case 'stopwalk': walk = null; st('STOPWALK'); break;
+        case 'hotbar': {
+          const n = Number(args[0]);
+          if (!(n >= 0 && n <= 8)) { st('HOTBAR 0-8'); break; }
+          try { bot.setQuickBarSlot(n); st('HOTBAR ' + n); } catch (e) { st('HOTBAR_FEHLER ' + e.message); }
+          break;
+        }
+        case 'lookabs': {
+          const yaw = Number(args[0]); const pitch = Number(args[1]);
+          if (!isFinite(yaw) || !isFinite(pitch)) { st('LOOKABS braucht yaw pitch'); break; }
+          bot.look(yaw, pitch, true).then(() => st('LOOKABS ' + yaw + ' ' + pitch)).catch((e) => st('LOOKABS_FEHLER ' + e.message));
+          break;
+        }
+        case 'sprint': {
+          const on = String(args[0] || '1') === '1';
+          try { bot.setControlState('sprint', on); st('SPRINT ' + on); } catch (e) {}
+          break;
+        }
+        case 'respawn': {
+          try { bot.respawn(); st('RESPAWN gesendet'); } catch (e) { st('RESPAWN_FEHLER ' + e.message); }
+          break;
+        }
+        case 'players': {
+          const list = Object.values(bot.entities).filter((e) => e.type === 'player' && e.username).map((e) => e.username);
+          st('SPIELER ' + (list.join(', ') || 'keine'));
+          break;
+        }
+        case 'health': {
+          st('LEBEN ' + Math.round(bot.health) + ' ESSEN ' + Math.round(bot.food) + ' MODUS ' + (bot.game ? bot.game.gameMode : '?'));
+          break;
+        }
         case 'usehold': {
           // Rechtsklick halten (Schild blocken), 'usehold 1' bzw. 'usehold 0'
           const on = String(args[0] || '1') === '1';

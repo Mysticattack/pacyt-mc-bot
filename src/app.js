@@ -207,6 +207,15 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
 .x:hover{color:var(--txt);border-color:#39485a}
 .mhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:34px}
 .pos{font-variant-numeric:tabular-nums}
+.lookpad{height:150px;border-radius:14px;border:1px dashed #31404f;background:repeating-linear-gradient(45deg,#121a22,#121a22 10px,#151e27 10px,#151e27 20px);display:flex;align-items:center;justify-content:center;color:#5f7286;font-size:12px;touch-action:none;cursor:grab;margin-bottom:10px}
+.hotbar{display:grid;grid-template-columns:repeat(9,1fr);gap:5px}
+.slot{position:relative;aspect-ratio:1;border:1px solid var(--line);border-radius:9px;background:#0d1319;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.slot.on{border-color:var(--acc);box-shadow:0 0 0 2px rgba(61,220,132,.25) inset}
+.slot img{width:26px;height:26px;image-rendering:pixelated}
+.slot b{position:absolute;right:3px;bottom:1px;font-size:10px}
+.slot i{position:absolute;left:3px;top:1px;font-size:9px;color:#6f8194;font-style:normal}
+.vitals{display:flex;gap:14px;flex-wrap:wrap;font-size:13px}
+.hearts{color:#e35d6a;letter-spacing:1px}
 .chatlog{max-height:200px;overflow:auto;font-size:12.5px;line-height:1.5;color:#c8d3df;background:#0d1319;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
 .chatlog div{padding:1px 0}
 .chatin{flex:1}
@@ -242,6 +251,7 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
 
   <div class="card">
     <h2>Bewegen</h2>
+    <div id="lookpad" class="lookpad">hier ziehen = umsehen</div>
     <div class="pad">
       <span class="spacer"></span><button class="key" data-act="forward">W</button><span class="spacer"></span>
       <button class="key" data-act="left">A</button><button class="key" data-act="back">S</button><button class="key" data-act="right">D</button>
@@ -254,9 +264,20 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
   </div>
 
   <div class="card">
+    <h2>Hand und Hotbar</h2>
+    <div id="hotbar" class="hotbar"></div>
+    <div class="hint" id="held" style="margin-top:8px">in der Hand: -</div>
+    <div class="grid2" style="margin-top:10px">
+      <button class="chip" id="respawnBtn">Respawn</button>
+      <button class="chip" id="dropBtn">Hand wegwerfen</button>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Aktionen</h2>
     <div class="grid2">
       <button class="chip" data-act="sneak">Schleichen</button>
+      <button class="chip" id="sprintBtn">Rennen</button>
       <button class="chip" data-act="up">Steigen</button>
       <button class="chip" data-act="down">Sinken</button>
       <button class="chip danger" id="stop">Stop</button>
@@ -281,6 +302,12 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
       <button class="chip" id="wpsave">Hier merken</button>
     </div>
     <div id="wplist" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2>Zustand</h2>
+    <div class="vitals" id="vitals">-</div>
+    <div id="playerlist" class="hint" style="margin-top:10px">-</div>
   </div>
 
   <div class="card">
@@ -371,6 +398,63 @@ const send = async (text) => {
   const r = await fetch(api('cmd'), { method: 'POST', body: text });
   $('log').textContent = text + ' -> ' + (await r.text());
   return r;
+};
+
+// Umsehen per Ziehen
+let dragging = false, lx = 0, ly = 0;
+const pad = $('lookpad');
+pad.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; pad.style.cursor = 'grabbing'; });
+addEventListener('pointerup', () => { dragging = false; pad.style.cursor = 'grab'; });
+addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const dx = Math.round((e.clientX - lx) / 6);
+  const dy = Math.round((e.clientY - ly) / 6);
+  if (!dx && !dy) return;
+  lx = e.clientX; ly = e.clientY;
+  send('lookrel ' + dx + ' ' + dy);
+});
+
+let sprintOn = false;
+$('sprintBtn').onclick = () => {
+  sprintOn = !sprintOn;
+  $('sprintBtn').classList.toggle('on', sprintOn);
+  send('sprint ' + (sprintOn ? '1' : '0'));
+};
+$('respawnBtn').onclick = () => send('respawn');
+$('dropBtn').onclick = () => send('drop ' + (window.__heldSlot !== undefined && window.__heldSlot !== null ? 36 + window.__heldSlot : -1));
+
+const renderHotbar = (state) => {
+  const box = $('hotbar');
+  if (!box) return;
+  const slots = state.hotbar || [];
+  window.__heldSlot = state.heldSlot;
+  box.innerHTML = slots.map((s, i) =>
+    '<div class="slot' + (state.heldSlot === i ? ' on' : '') + '" data-hot="' + i + '">' +
+    '<i>' + (i + 1) + '</i>' +
+    (s ? '<img src="/icon/' + encodeURIComponent(s.name) + '.png" alt=""><b>' + s.count + '</b>' : '') +
+    '</div>').join('');
+  for (const el of box.querySelectorAll('[data-hot]')) {
+    el.onclick = () => fetch(api('/hotbar'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slot: Number(el.dataset.hot) }) });
+  }
+  $('held').textContent = 'in der Hand: ' + (state.heldItem || '-');
+};
+
+const refreshState = async () => {
+  try {
+    const s = await (await fetch(api('/state'), { cache: 'no-store' })).json();
+    const hearts = Math.max(0, Math.min(10, Math.round((s.health || 0) / 2)));
+    $('vitals').innerHTML =
+      '<span class="hearts">' + '♥'.repeat(hearts) + '♡'.repeat(10 - hearts) + '</span>' +
+      '<span>' + (s.health !== null ? s.health : '-') + ' Leben</span>' +
+      '<span>Essen ' + (s.food !== null ? s.food : '-') + '</span>' +
+      '<span>Modus ' + (s.gamemode || '-') + '</span>' +
+      '<span>' + (s.dimension || '-') + '</span>';
+    renderHotbar(s);
+    const pl = s.players || [];
+    $('playerlist').innerHTML = pl.length
+      ? pl.map(p => '<div class="lrow"><span>' + p.name + '</span><span>' + p.dist + ' Bloecke</span></div>').join('')
+      : '<div class="hint">niemand in Sicht</div>';
+  } catch (e) {}
 };
 const normKey = (e) => (e.key === ' ' ? ' ' : e.key);
 const TURN = { yawLeft: [1, 0], yawRight: [-1, 0], pitchUp: [0, -1], pitchDown: [0, 1] };
@@ -585,10 +669,11 @@ const refresh = async () => {
   } catch (e) {}
 };
 fetch('/keys').then(r => r.json()).then(k => { KEYS = k; });
-loadAccounts().then(() => { refresh(); loadChat(); });
+loadAccounts().then(() => { refresh(); refreshState(); loadChat(); });
 loadChat();
 loadWp();
 setInterval(refresh, 5000);
+setInterval(refreshState, 4000);
 setInterval(loadChat, 3000);
 setInterval(() => { if ($('inv').classList.contains('open')) renderInv(); }, 5000);
 openJoin();
@@ -1057,6 +1142,65 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('neustart');
     setTimeout(() => process.exit(0), 400);
+    return;
+  }
+
+  if (req.url === '/state') {
+    const inst = pick(req);
+    const bot = inst && inst.getBot ? inst.getBot() : null;
+    const players = [];
+    let entities = 0;
+    try {
+      for (const e of Object.values(bot.entities || {})) {
+        if (!e || !e.position) continue;
+        entities += 1;
+        if (e.type === 'player' && e.username) {
+          players.push({ name: e.username, dist: Math.round(bot.entity.position.distanceTo(e.position)) });
+        }
+      }
+    } catch (e) {}
+    const hotbar = [];
+    try {
+      for (let i = 0; i < 9; i++) {
+        const it = bot.inventory.slots[36 + i];
+        hotbar.push(it ? { slot: 36 + i, name: it.name, count: it.count } : null);
+      }
+    } catch (e) {}
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({
+      connected: Boolean(bot && bot.entity),
+      health: bot ? Math.round(bot.health * 10) / 10 : null,
+      food: bot ? Math.round(bot.food) : null,
+      gamemode: bot && bot.game ? bot.game.gameMode : null,
+      dimension: bot && bot.game ? bot.game.dimension : null,
+      heldSlot: bot ? bot.quickBarSlot : null,
+      heldItem: bot && bot.heldItem ? bot.heldItem.name : null,
+      hotbar,
+      players: players.slice(0, 20),
+      entities
+    }));
+    return;
+  }
+
+  if (req.method === 'POST' && (req.url === '/hotbar' || req.url === '/look' || req.url === '/respawn')) {
+    const inst = pick(req);
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const j = body ? JSON.parse(body) : {};
+        const cmdFile = (inst && inst.cmdFile) || CMD;
+        if (req.url === '/hotbar') {
+          fs.appendFileSync(cmdFile, 'hotbar ' + Number(j.slot) + '\n');
+        } else if (req.url === '/look') {
+          fs.appendFileSync(cmdFile, 'lookabs ' + Number(j.yaw).toFixed(3) + ' ' + Number(j.pitch).toFixed(3) + '\n');
+        } else {
+          fs.appendFileSync(cmdFile, 'respawn\n');
+        }
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ok');
+      } catch (e) { res.writeHead(400); res.end('bad json'); }
+    });
     return;
   }
 
