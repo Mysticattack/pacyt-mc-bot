@@ -205,6 +205,14 @@ function startBot () {
   if (pf) {
     try {
       bot.loadPlugin(pf.pathfinder);
+      try {
+        const mv = new pf.Movements(bot);
+        mv.allowParkour = true;
+        mv.allowSprinting = true;
+        mv.allow1by1towers = true;
+        mv.canOpenDoors = true;
+        bot.pathfinder.setMovements(mv);
+      } catch (e) {}
       st('PATHFINDER geladen');
       bot.on('path_update', (r) => {
         if (!r || !r.status) return;
@@ -212,6 +220,47 @@ function startBot () {
         st('PF ' + r.status + (r.path ? ' (' + r.path.length + ' Schritte)' : ''));
       });
       bot.on('goal_reached', () => st('PF Ziel erreicht'));
+      const feinde = ['zombie', 'skeleton', 'creeper', 'spider', 'cave_spider', 'enderman', 'witch', 'pillager', 'vindicator', 'drowned', 'husk', 'stray', 'phantom', 'slime', 'magma_cube', 'blaze', 'wither_skeleton', 'piglin_brute', 'hoglin', 'zoglin', 'ravager', 'silverfish', 'guardian'];
+      global.__mcGuard = true;
+      setInterval(() => {
+        if (global.__mcBusy) {
+          global.__mcBusySeit = global.__mcBusySeit || Date.now();
+          if (Date.now() - global.__mcBusySeit > 120000) {
+            st('SPERRE aufgehoben nach 120 Sekunden: ' + global.__mcBusy);
+            global.__mcBusy = null;
+            global.__mcBusySeit = 0;
+          }
+        } else { global.__mcBusySeit = 0; }
+      }, 5000);
+      let naechsterSchlag = 0;
+      let letzteMeldung = 0;
+      setInterval(() => {
+        if (!global.__mcGuard || !bot.entity) return;
+        const nah = Object.values(bot.entities)
+          .filter((e) => e && e !== bot.entity && e.name && feinde.includes(String(e.name).toLowerCase()) && e.position && e.position.distanceTo(bot.entity.position) < 8)
+          .sort((a, b2) => a.position.distanceTo(bot.entity.position) - b2.position.distanceTo(bot.entity.position));
+        if (!nah.length) return;
+        const mob = nah[0];
+        const abstand = mob.position.distanceTo(bot.entity.position);
+        const jetzt = Date.now();
+        if (jetzt - letzteMeldung > 3000) { st('MOB ' + mob.name + ' in ' + Math.round(abstand) + ' Bloecken, Leben ' + Math.round(bot.health)); letzteMeldung = jetzt; }
+        const schwach = bot.health <= 8;
+        if (schwach || mob.name === 'creeper') {
+          const weg = bot.entity.position.minus(mob.position).normalize().scaled(10);
+          const zielP = bot.entity.position.plus(weg);
+          try { bot.pathfinder.setGoal(new pf.goals.GoalNear(Math.round(zielP.x), Math.round(bot.entity.position.y), Math.round(zielP.z), 2)); st('FLUCHT vor ' + mob.name); } catch (e) {}
+          return;
+        }
+        const waffe = bot.inventory.items().find((i) => i.name.endsWith('_sword')) || bot.inventory.items().find((i) => i.name.endsWith('_axe'));
+        if (waffe && bot.heldItem && bot.heldItem.name !== waffe.name) { bot.equip(waffe, 'hand').catch(() => {}); }
+        if (abstand <= 3.5 && jetzt > naechsterSchlag) {
+          naechsterSchlag = jetzt + 650;
+          try { bot.lookAt(mob.position.offset(0, 1, 0), true); } catch (e) {}
+          try { bot.attack(mob); st('SCHLAG ' + mob.name + ' (' + Math.round(mob.health || 0) + ' Leben)'); } catch (e) {}
+        } else if (abstand > 3.5) {
+          try { bot.pathfinder.setGoal(new pf.goals.GoalNear(Math.round(mob.position.x), Math.round(mob.position.y), Math.round(mob.position.z), 2)); } catch (e) {}
+        }
+      }, 700);
     } catch (e) { st('PATHFINDER_FEHLER ' + e.message); }
   }
 
@@ -760,6 +809,80 @@ function startBot () {
               st('SMELT INV ' + bot.inventory.items().map((i) => i.count + 'x ' + i.name).join(', '));
             } catch (e) { st('SMELT_FEHLER ' + (e && e.message)); }
             global.__mcBusy = null;
+          })();
+          break;
+        }
+        case 'jump': {
+          const dauer = Math.max(1, Math.min(20, Number(args[0] || 4)));
+          bot.setControlState('jump', true);
+          setTimeout(() => bot.setControlState('jump', false), dauer * 100);
+          st('SPRUNG ' + dauer);
+          break;
+        }
+        case 'guard': {
+          const wahl = String(args[0] || 'on').toLowerCase();
+          global.__mcGuard = wahl !== 'off';
+          st('GUARD ' + (global.__mcGuard ? 'an' : 'aus'));
+          break;
+        }
+        case 'iron': {
+          if (global.__mcBusy) { st('BESCHAEFTIGT ' + global.__mcBusy); break; }
+          global.__mcBusy = 'iron';
+          const ziel = Math.max(1, Math.min(32, Number(args[0] || 6)));
+          (async () => {
+            const vec3 = require('vec3').Vec3;
+            const spitze = bot.inventory.items().find((i) => i.name.endsWith('_pickaxe'));
+            if (spitze) { try { await bot.equip(spitze, 'hand'); } catch (e) {} }
+            const erz = () => bot.inventory.items().filter((i) => i.name.includes('raw_iron')).reduce((a, i) => a + i.count, 0);
+            let abgebaut = 0;
+            for (let runde = 0; runde < 24 && (erz() < ziel || abgebaut < ziel); runde++) {
+              const ader = bot.findBlock({
+                matching: (bl) => bl && (bl.name.includes('iron_ore') || bl.name.includes('deepslate_iron')),
+                maxDistance: 12
+              });
+              if (!ader) { st('IRON keine Ader in Sicht, Erz=' + erz()); break; }
+              try {
+                await bot.pathfinder.goto(new pf.goals.GoalNear(ader.position.x, ader.position.y, ader.position.z, 2));
+                const frisch = bot.blockAt(ader.position);
+                if (!frisch || !frisch.name.includes('iron_ore')) continue;
+                await bot.dig(frisch);
+                abgebaut += 1;
+                try {
+                  bot.setControlState('forward', true);
+                  await bot.lookAt(ader.position.offset(0.5, 0.5, 0.5));
+                  await bot.waitForTicks(8);
+                  bot.setControlState('forward', false);
+                } catch (e) { bot.setControlState('forward', false); }
+                try { await bot.pathfinder.goto(new pf.goals.GoalBlock(ader.position.x, ader.position.y, ader.position.z)); } catch (e) {}
+                await bot.waitForTicks(6);
+                st('IRON ' + abgebaut + ' ' + frisch.name + ' Erz=' + erz());
+              } catch (e) { st('IRON_FEHLER ' + (e && e.message)); break; }
+            }
+            st('IRON fertig Erz=' + erz());
+            global.__mcBusy = null;
+          })();
+          break;
+        }
+        case 'craftiron': {
+          (async () => {
+            const reg = bot.registry;
+            const idOf = (n) => (reg.itemsByName[n] ? reg.itemsByName[n].id : null);
+            const table = bot.findBlock({ matching: reg.blocksByName.crafting_table.id, maxDistance: 8 });
+            if (!table) { st('CRAFT3 keine Werkbank in der Naehe'); return; }
+            const bauen = async (name) => {
+              const id = idOf(name);
+              if (!id) return 0;
+              const recs = (bot.recipesFor(id, null, 1, table) || []).filter((r) => !r.requiresTable || table);
+              if (!recs.length) { st('CRAFT3 ' + name + ': kein Rezept, Material fehlt'); return 0; }
+              try { await bot.craft(recs[0], 1, recs[0].requiresTable ? table : null); st('CRAFT3 ' + name + ' gebaut'); return 1; }
+              catch (e) { st('CRAFT3_FEHLER ' + name + ' ' + e.message); return 0; }
+            };
+            await bauen('iron_pickaxe');
+            await bauen('iron_sword');
+            await bauen('iron_axe');
+            const schwert = bot.inventory.items().find((i) => i.name === 'iron_sword' || i.name === 'stone_sword');
+            if (schwert) { try { await bot.equip(schwert, 'hand'); st('CRAFT3 ' + schwert.name + ' in der Hand'); } catch (e) {} }
+            st('CRAFT3 INV ' + bot.inventory.items().map((i) => i.count + 'x ' + i.name).join(', '));
           })();
           break;
         }
