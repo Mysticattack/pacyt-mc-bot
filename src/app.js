@@ -59,6 +59,71 @@ function saveKeys (keys) {
 }
 
 
+
+const blockColorCache = new Map();
+let canvasLib = null;
+try { canvasLib = require('canvas'); } catch (e) { canvasLib = null; }
+
+function texturePath (name) {
+  const base = path.join(__dirname, 'node_modules', 'prismarine-viewer', 'public', 'textures');
+  const stem = name
+    .replace(/_stairs$/, '')
+    .replace(/_slab$/, '')
+    .replace(/_fence(_gate)?$/, '')
+    .replace(/_wall$/, '')
+    .replace(/_door$/, '')
+    .replace(/_trapdoor$/, '')
+    .replace(/_button$/, '')
+    .replace(/_pressure_plate$/, '');
+  const special = { water: 'water_still', lava: 'lava_still', flowing_water: 'water_flow', flowing_lava: 'lava_flow' };
+  const variants = [name, stem, stem + '_top', stem + '_side', stem + '_planks', name.replace(/_block$/, '_side')];
+  if (special[name]) variants.unshift(special[name]);
+  if (special[stem]) variants.push(special[stem]);
+  for (const ver of ['1.21.4', '1.21.1', '1.20.1']) {
+    for (const v of variants) {
+      for (const kind of ['blocks', 'items']) {
+        const f = path.join(base, ver, kind, v + '.png');
+        try { if (fs.existsSync(f)) return f; } catch (e) {}
+      }
+    }
+  }
+  return null;
+}
+
+// mittlere Farbe einer Blocktextur, damit die 3D-Ansicht echte Farben zeigt
+function colorOf (name) {
+  if (blockColorCache.has(name)) return blockColorCache.get(name);
+  const fallback = null;
+  if (!canvasLib) { blockColorCache.set(name, fallback); return fallback; }
+  const file = texturePath(name);
+  if (!file) { blockColorCache.set(name, fallback); return fallback; }
+  return canvasLib.loadImage(file).then((img) => {
+    try {
+      const size = 16;
+      const c = canvasLib.createCanvas(size, size);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, size, size);
+      const data = ctx.getImageData(0, 0, size, size).data;
+      let r = 0; let g = 0; let b = 0; let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] < 32) continue;
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; n += 1;
+      }
+      let hex = n ? (Math.round(r / n) << 16) + (Math.round(g / n) << 8) + Math.round(b / n) : null;
+      if (hex !== null) {
+        const cr = (hex >> 16) & 255; const cg = (hex >> 8) & 255; const cb = hex & 255;
+        const gray = Math.max(cr, cg, cb) - Math.min(cr, cg, cb) < 14;
+        const tintGreen = /grass|leaves|foliage|vine|fern|sugar_cane|lily_pad|bush|moss/.test(name);
+        const tintWater = /water|bubble/.test(name);
+        if (gray && tintGreen) hex = (Math.round(cr * 0.55) << 16) + (Math.round(cg * 0.85) << 8) + Math.round(cb * 0.45);
+        else if (gray && tintWater) hex = (Math.round(cr * 0.35) << 16) + (Math.round(cg * 0.55) << 8) + Math.round(cb * 0.95);
+      }
+      blockColorCache.set(name, hex);
+      return hex;
+    } catch (e) { blockColorCache.set(name, fallback); return fallback; }
+  }).catch(() => { blockColorCache.set(name, fallback); return fallback; });
+}
+
 function notifyDiscord (text) {
   const url = process.env.DISCORD_WEBHOOK;
   if (!url) return;
@@ -82,6 +147,8 @@ function notifyDiscord (text) {
 const page = `<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bot-Steuerung</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#141a21">
 <style>
 :root{--bg:#0a0c10;--card:#141a21;--card2:#1a222b;--line:#26303b;--txt:#e8eef5;--muted:#8b9aab;--acc:#3ddc84;--acc2:#2bb96e;--danger:#e35d6a}
 *{box-sizing:border-box}
@@ -480,6 +547,8 @@ openJoin();
 const page3d = `<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>3D-Ansicht</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0a0e13">
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#0a0e13;color:#e8eef5;font-family:ui-sans-serif,system-ui,sans-serif}
 #c{display:block;width:100vw;height:100vh;touch-action:none}
@@ -587,7 +656,7 @@ const FIXED = Q.has('pitch') || Q.has('dist');
 
 function build (data) {
   if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
-  const colors = data.palette.map(colorFor);
+  const colors = data.palette.map((p) => (p && p.color !== null && p.color !== undefined) ? p.color : colorFor(p && p.name ? p.name : String(p)));
   const geo = new THREE.BoxGeometry(1, 1, 1);
   const mat = new THREE.MeshLambertMaterial({ vertexColors: false });
   mesh = new THREE.InstancedMesh(geo, mat, data.cells.length);
@@ -814,13 +883,17 @@ const server = http.createServer((req, res) => {
         }
       }
     }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({
-      version: bot.version,
-      center: { x: center.x, y: center.y, z: center.z },
-      palette,
-      cells
-    }));
+    Promise.all(palette.map(colorOf)).then((colors) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({
+        version: bot.version,
+        center: { x: center.x, y: center.y, z: center.z },
+        palette: palette.map((name, i) => ({ name, color: colors[i] })),
+        cells
+      }));
+    }).catch(() => {
+      res.writeHead(500); res.end('fehler');
+    });
     return;
   }
 
@@ -904,6 +977,48 @@ const server = http.createServer((req, res) => {
       viewer: startedViewer,
       worldInfo: global.__worldInfo || null
     }));
+    return;
+  }
+
+  if (req.url === '/manifest.webmanifest') {
+    res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({
+      name: 'Bot-Steuerung',
+      short_name: 'Bot',
+      start_url: '/',
+      display: 'standalone',
+      background_color: '#0a0c10',
+      theme_color: '#141a21',
+      icons: [
+        { src: '/appicon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/appicon-512.png', sizes: '512x512', type: 'image/png' }
+      ]
+    }));
+    return;
+  }
+
+  if (req.url === '/appicon-192.png' || req.url === '/appicon-512.png') {
+    const size = req.url.indexOf('512') > -1 ? 512 : 192;
+    try {
+      const { createCanvas } = require('canvas');
+      const c = createCanvas(size, size);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#0f1f16';
+      ctx.fillRect(0, 0, size, size);
+      const u2 = size / 4;
+      ctx.fillStyle = '#3ddc84';
+      ctx.fillRect(u2 * 0.6, u2 * 1.6, u2 * 0.9, u2 * 0.9);
+      ctx.fillStyle = '#2bb96e';
+      ctx.fillRect(u2 * 1.6, u2 * 1.1, u2 * 0.9, u2 * 0.9);
+      ctx.fillStyle = '#1f8f55';
+      ctx.fillRect(u2 * 2.4, u2 * 1.9, u2 * 0.9, u2 * 0.9);
+      ctx.fillStyle = '#e8eef5';
+      ctx.font = 'bold ' + Math.round(size / 7) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('BOT', size / 2, size * 0.85);
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' });
+      res.end(c.toBuffer('image/png'));
+    } catch (e) { res.writeHead(500); res.end(''); }
     return;
   }
 
