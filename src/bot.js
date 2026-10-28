@@ -56,15 +56,16 @@ function knownVersion (v) {
   } catch (e) { return null; }
 }
 
-function detectVersion (host, port) {
+function detectVersion (host, port, log) {
+  const say = log || ((m) => console.log(m));
   return new Promise((resolve) => {
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     try {
       mcProto.ping({ host, port, closeTimeout: 5000 }, (err, res) => {
-        if (err || !res || !res.version) { st('PING fehlgeschlagen: ' + (err && err.message)); return finish(null); }
+        if (err || !res || !res.version) { say('PING fehlgeschlagen: ' + (err && err.message)); return finish(null); }
         const proto = res.version.protocol;
-        st('PING ' + res.version.name + ' protocol=' + proto);
+        say('PING ' + res.version.name + ' protocol=' + proto);
         let v = null;
         try { const d = minecraftData(res.version.name); if (d && d.version && d.version.version === proto) v = res.version.name; } catch (e) {}
         if (!v) v = resolveVersionByProtocol(proto);
@@ -75,13 +76,14 @@ function detectVersion (host, port) {
   });
 }
 
-const st = (m) => console.log('[' + new Date().toISOString().slice(11, 19) + '] ' + m);
-const FILE_CONTROL = process.env.MC_CONTROL_FILE || path.join(__dirname, 'control.json');
-const FILE_CMD = process.env.MC_CMD_FILE || path.join(__dirname, 'cmd.txt');
+function createInstance (cfg) {
+const st = (m) => console.log('[' + new Date().toISOString().slice(11, 19) + '][' + (cfg.id || 'main') + '] ' + m);
+const FILE_CONTROL = process.env.MC_CONTROL_FILE || path.join(__dirname, cfg.id ? 'control-' + cfg.id + '.json' : 'control.json');
+const FILE_CMD = process.env.MC_CMD_FILE || path.join(__dirname, cfg.id ? 'cmd-' + cfg.id + '.txt' : 'cmd.txt');
 
 // Laufzeit-Ziel (per /join aenderbar) und aktueller Bot
-const TARGET_FILE = process.env.MC_TARGET_FILE || path.join(__dirname, 'target.json');
-const PREFS_FILE = process.env.MC_PREFS_FILE || path.join(__dirname, 'prefs.json');
+const TARGET_FILE = process.env.MC_TARGET_FILE || path.join(__dirname, cfg.id ? 'target-' + cfg.id + '.json' : 'target.json');
+const PREFS_FILE = process.env.MC_PREFS_FILE || path.join(__dirname, cfg.id ? 'prefs-' + cfg.id + '.json' : 'prefs.json');
 
 function loadJson (file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; }
@@ -139,7 +141,7 @@ function join (host, port, version) {
 function startBot () {
   if (starting) return currentBot;
   if (currentBot) return currentBot;
-  if (!process.env.MC_USER) {
+  if (!(cfg.user || process.env.MC_USER)) {
     st('MC_USER fehlt — in der .env eintragen (z. B. MC_USER=mail@example.com), Bot startet nicht');
     return null;
   }
@@ -151,7 +153,7 @@ function startBot () {
 
   // Version automatisch bestimmen, wenn keine gesetzt ist
   if (!version) {
-    detectVersion(host, port).then((v) => {
+    detectVersion(host, port, st).then((v) => {
       const detected = v || '1.21.8';
       overrides.detected = detected;
       try { overrides.detectedProtocol = minecraftData(detected).version.version; } catch (e) { overrides.detectedProtocol = 0; }
@@ -176,9 +178,9 @@ function startBot () {
     bot = mineflayer.createBot({
     host,
     port,
-    username: process.env.MC_USER || '',
+    username: cfg.user || process.env.MC_USER || '',
     auth: 'microsoft',
-    profilesFolder: process.env.MC_AUTH_CACHE || path.join(__dirname, 'auth'),
+    profilesFolder: process.env.MC_AUTH_CACHE || path.join(__dirname, 'auth', cfg.id || 'main'),
     authTitle: MC_TITLE,
     deviceType: 'Linux',
     flow: 'live',
@@ -513,14 +515,31 @@ setInterval(() => {
 function setPreferView (v) { preferView = Boolean(v); saveJson(PREFS_FILE, { preferView }); return preferView; }
 function getPreferView () { return preferView; }
 
-module.exports = {
-  getChat: () => chatLog.slice(),
-  setChatHook,
-  setPreferView,
-  getPreferView,
-  startBot,
-  join,
-  getBot: () => currentBot,
-  target: () => effective()
-};
-if (require.main === module) startBot();
+
+
+  function stop () {
+    try { if (currentBot) currentBot.quit(); } catch (e) {}
+    currentBot = null;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    starting = false;
+    st('GESTOPPT');
+  }
+
+  return {
+    id: cfg.id || 'main',
+    user: cfg.user || process.env.MC_USER || '',
+    cmdFile: FILE_CMD,
+    start: startBot,
+    stop,
+    join,
+    target: effective,
+    getBot: () => currentBot,
+    getChat: () => chatLog.slice(),
+    setChatHook,
+    setPreferView,
+    getPreferView,
+    isConnected: () => Boolean(currentBot && currentBot.entity)
+  };
+}
+
+module.exports = { createInstance };

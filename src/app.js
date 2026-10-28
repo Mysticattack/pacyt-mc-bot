@@ -228,6 +228,18 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
     <div class="pill"><span class="dot" id="dot"></span><span id="conn">nicht verbunden</span></div>
   </header>
 
+  <div class="card" id="botcard">
+    <h2>Konten</h2>
+    <div id="bottabs" class="grid2"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="accname" class="chatin" placeholder="Name, z. B. zweiter">
+      <input id="accmail" class="chatin" placeholder="Microsoft-Mail des Kontos">
+      <button class="chip" id="accadd">Konto hinzufügen</button>
+      <button class="chip" id="accrestart">Neu starten</button>
+    </div>
+    <div class="hint" id="accmsg"></div>
+  </div>
+
   <div class="card">
     <h2>Bewegen</h2>
     <div class="pad">
@@ -280,7 +292,7 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
       </div>
     </div>
     <div class="row" style="margin-top:12px">
-      <a class="link" href="/v3d" target="_blank">Live-Ansicht öffnen</a>
+      <a class="link" id="v3dlink" href="/v3d" target="_blank">Live-Ansicht öffnen</a>
       <a class="link" id="joinBtn" href="#">Server wechseln</a>
     </div>
   </div>
@@ -316,8 +328,47 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
 
 <script>
 const $ = (id) => document.getElementById(id);
+let BOT = localStorage.getItem('botid') || '';
+const api = (p) => p + (p.indexOf('?') > -1 ? '&' : '?') + 'bot=' + encodeURIComponent(BOT);
+
+const loadAccounts = async () => {
+  try {
+    const j = await (await fetch('/accounts', { cache: 'no-store' })).json();
+    const list = j.accounts || [];
+    if (!list.length) return;
+    if (!BOT || !list.some((a) => a.id === BOT)) BOT = list[0].id;
+    localStorage.setItem('botid', BOT);
+    const box = $('bottabs');
+    box.innerHTML = list.map((a) => '<button class="chip' + (a.id === BOT ? ' on' : '') + '" data-bot="' + a.id + '">' +
+      '<span style="color:' + (a.connected ? '#3ddc84' : '#e35d6a') + '">●</span> ' + a.id + (a.user ? '<div class="hint" style="font-size:10px">' + a.user + '</div>' : '') + '</button>').join('');
+    for (const b of box.querySelectorAll('[data-bot]')) {
+      b.onclick = () => { BOT = b.dataset.bot; localStorage.setItem('botid', BOT); loadAccounts(); refresh(); loadChat(); };
+    }
+    $('botcard').style.display = 'block';
+  } catch (e) {}
+};
+
+$('accadd').onclick = async () => {
+  const id = $('accname').value.trim();
+  const user = $('accmail').value.trim();
+  if (!id || !user) { $('accmsg').textContent = 'Name und Mail eintragen'; return; }
+  const r = await fetch('/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, user }) });
+  if (r.ok) {
+    $('accmsg').textContent = 'Konto ' + id + ' gespeichert. Jetzt "Neu starten", danach erscheint der Anmeldecode im Log.';
+    $('accname').value = ''; $('accmail').value = '';
+    loadAccounts();
+  } else {
+    $('accmsg').textContent = await r.text();
+  }
+};
+$('accrestart').onclick = async () => {
+  $('accmsg').textContent = 'Neustart laeuft ...';
+  await fetch('/restart', { method: 'POST' });
+  setTimeout(() => location.reload(), 8000);
+};
+
 const send = async (text) => {
-  const r = await fetch('cmd', { method: 'POST', body: text });
+  const r = await fetch(api('cmd'), { method: 'POST', body: text });
   $('log').textContent = text + ' -> ' + (await r.text());
   return r;
 };
@@ -421,7 +472,7 @@ $('invBtn').onclick = showInv;
 let chatSeen = 0;
 const loadChat = async () => {
   try {
-    const j = await (await fetch('/chat', { cache: 'no-store' })).json();
+    const j = await (await fetch(api('/chat'), { cache: 'no-store' })).json();
     const box = $('chatlog');
     if (!j.lines || !j.lines.length) { box.textContent = 'keine Nachrichten'; return; }
     box.innerHTML = j.lines.slice(-40).map(l => '<div>' + l.text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])) + '</div>').join('');
@@ -431,7 +482,7 @@ const loadChat = async () => {
 $('chatsend').onclick = async () => {
   const v = $('chatin').value.trim();
   if (!v) return;
-  await fetch('/chat', { method: 'POST', body: v });
+  await fetch(api('/chat'), { method: 'POST', body: v });
   $('chatin').value = '';
   setTimeout(loadChat, 400);
 };
@@ -445,7 +496,7 @@ const loadWp = async () => {
   box.innerHTML = j.waypoints.map(w =>
     '<div class="lrow"><span>' + w.name + ' · ' + w.x + ', ' + w.y + ', ' + w.z + '</span>' +
     '<span><button data-go="' + w.name + '">hin</button> <button data-del="' + w.name + '">löschen</button></span></div>').join('');
-  for (const b of box.querySelectorAll('[data-go]')) b.onclick = () => fetch('/goto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: b.dataset.go }) }).then(() => { $('log').textContent = 'gehe zu ' + b.dataset.go; });
+  for (const b of box.querySelectorAll('[data-go]')) b.onclick = () => fetch(api('/goto'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: b.dataset.go }) }).then(() => { $('log').textContent = 'gehe zu ' + b.dataset.go; });
   for (const b of box.querySelectorAll('[data-del]')) b.onclick = () => fetch('/waypoints', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ delete: b.dataset.del }) }).then(loadWp);
 };
 $('wpsave').onclick = async () => {
@@ -492,11 +543,11 @@ $('keysBtn').onclick = showKeys;
 const modal = $('joinModal');
 fetch('/prefs').then(r => r.json()).then(p => { const c = $('jView'); if (c) c.checked = p.preferView !== false; });
 $('jView').onchange = async () => {
-  const r = await fetch('/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preferView: $('jView').checked }) });
+  const r = await fetch(api('/prefs'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preferView: $('jView').checked }) });
   $('jStatus').textContent = 'Ansicht-Einstellung gespeichert: ' + (r.ok ? '' : 'Fehler');
 };
 const openJoin = async () => {
-  const st = await (await fetch('/status')).json();
+  const st = await (await fetch(api('/status'))).json();
   $('jHost').value = st.host || '';
   $('jPort').value = st.port || 25565;
   $('jVer').value = st.version || '';
@@ -505,6 +556,7 @@ const openJoin = async () => {
   modal.classList.add('open');
 };
 $('joinBtn').onclick = (e) => { e.preventDefault(); openJoin(); };
+$('v3dlink').onclick = (e) => { e.preventDefault(); window.open('/v3d?bot=' + encodeURIComponent(BOT), '_blank'); };
 
 const closeJoin = () => modal.classList.remove('open');
 $('jClose').onclick = closeJoin;
@@ -517,7 +569,7 @@ $('jGo').onclick = async () => {
   const version = $('jVer').value.trim();
   if (!host) { $('jStatus').textContent = 'Host fehlt'; return; }
   $('jStatus').textContent = 'verbinde ...';
-  const r = await fetch('/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host, port, version }) });
+  const r = await fetch(api('/join'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host, port, version }) });
   $('jStatus').textContent = r.ok ? 'Wechsel gestartet' : 'Fehler beim Wechsel';
   if (r.ok) setTimeout(() => { modal.classList.remove('open'); location.reload(); }, 1500);
 };
@@ -525,7 +577,7 @@ $('jGo').onclick = async () => {
 // Status alle 5 Sekunden aktualisieren
 const refresh = async () => {
   try {
-    const st = await (await fetch('/status', { cache: 'no-store' })).json();
+    const st = await (await fetch(api('/status'), { cache: 'no-store' })).json();
     $('dot').classList.toggle('on', Boolean(st.connected));
     $('conn').textContent = st.connected ? (st.user + ' auf ' + st.host + ':' + st.port) : 'nicht verbunden';
     $('pos').textContent = st.pos ? ('Position ' + st.pos.x + ', ' + st.pos.y + ', ' + st.pos.z + (st.version ? ' · ' + st.version : '')) : 'keine Position';
@@ -533,7 +585,7 @@ const refresh = async () => {
   } catch (e) {}
 };
 fetch('/keys').then(r => r.json()).then(k => { KEYS = k; });
-refresh();
+loadAccounts().then(() => { refresh(); loadChat(); });
 loadChat();
 loadWp();
 setInterval(refresh, 5000);
@@ -735,7 +787,8 @@ function build (data) {
 
 async function load () {
   try {
-    const r = await fetch('/view3d.json?r=12&b=6&t=10', { cache: 'no-store' });
+    const botQ = new URLSearchParams(location.search).get('bot');
+    const r = await fetch('/view3d.json?r=12&b=6&t=10' + (botQ ? '&bot=' + encodeURIComponent(botQ) : ''), { cache: 'no-store' });
     const j = await r.json();
     if (j.error) { document.getElementById('info').textContent = j.error; return; }
     build(j);
@@ -811,12 +864,12 @@ const VIEWER_PORT = Number(process.env.VIEWER_PORT || 40801);
 const VIEWER_PORT_3P = Number(process.env.VIEWER_PORT_3P || 40802);
 let povPort = VIEWER_PORT;
 const startedViewer = {};
-let botApi = null;
+let botApi = null;  // bleibt fuer Kompatibilitaet unbenutzt
 
 function startViewer (port, firstPerson) {
   if (process.env.MC_OLD_VIEWER !== '1') return;
   if (startedViewer[port]) return;
-  const bot = botApi && botApi.getBot && botApi.getBot();
+  const inst = pick(req); const bot = inst && inst.getBot ? inst.getBot() : null;
   if (!bot) return;
   try {
     require('prismarine-viewer').mineflayer(bot, { port, firstPerson, prefix: '/viewer', viewDistance: Number(process.env.VIEWER_DISTANCE || 6) });
@@ -885,6 +938,12 @@ function sendPacked (req, res, urlPath) {
 }
 
 const server = http.createServer((req, res) => {
+  // Query abtrennen, damit Routen auch mit ?bot=... exakt matchen
+  const fullUrl = req.url;
+  const qPos = fullUrl.indexOf('?');
+  req.query = qPos > -1 ? fullUrl.slice(qPos) : '';
+  req.url = qPos > -1 ? fullUrl.slice(0, qPos) : fullUrl;
+
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
   if (!authorised(req)) {
     res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Bot", charset="UTF-8"' });
@@ -909,13 +968,13 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url.startsWith('/view3d.json')) {
-    const bot = botApi && botApi.getBot && botApi.getBot();
+    const inst = pick(req); const bot = inst && inst.getBot ? inst.getBot() : null;
     if (!bot || !bot.entity) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'kein Bot verbunden' }));
       return;
     }
-    const q = require('url').parse(req.url, true).query;
+    const q = require('url').parse(fullUrl, true).query;
     const radius = Math.min(Math.max(Number(q.r || 14), 4), 28);
     const below = Math.min(Math.max(Number(q.b || 6), 0), 24);
     const above = Math.min(Math.max(Number(q.t || 12), 2), 32);
@@ -965,16 +1024,58 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url.startsWith('/pov')) {
-    const mode = (req.url.split('mode=')[1] || 'first').trim();
+    const mode = (fullUrl.split('mode=')[1] || 'first').trim();
     if (mode === 'third') { startViewer(VIEWER_PORT_3P, false); povPort = VIEWER_PORT_3P; } else { startViewer(VIEWER_PORT, true); povPort = VIEWER_PORT; }
     res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
     res.end(mode);
     return;
   }
 
+  if (req.method === 'POST' && req.url === '/accounts') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      try {
+        const j = JSON.parse(body || '{}');
+        const id = String(j.id || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
+        const user = String(j.user || '').trim();
+        if (!id || !user) { res.writeHead(400); res.end('Name und Mail noetig'); return; }
+        let list = [];
+        try { list = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8')); } catch (e) { list = []; }
+        if (!Array.isArray(list)) list = [];
+        list = list.filter((x) => x && x.id !== id);
+        list.push({ id, user, enabled: true });
+        fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(list, null, 2));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, accounts: list, restart: true }));
+      } catch (e) { res.writeHead(400); res.end('bad json'); }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/restart') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('neustart');
+    setTimeout(() => process.exit(0), 400);
+    return;
+  }
+
+  if (req.url === '/accounts' || req.url.startsWith('/accounts?')) {
+    const list = Array.from(instances.values()).map((i) => ({
+      id: i.id,
+      user: i.user,
+      enabled: i.enabled !== false,
+      connected: Boolean(i.isConnected && i.isConnected()),
+      host: (i.target ? i.target().host : null)
+    }));
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ accounts: list }));
+    return;
+  }
+
   if (req.url === '/status') {
-    const bot = botApi && botApi.getBot && botApi.getBot();
-    const t = (botApi && botApi.target && botApi.target()) || {};
+    const inst = pick(req); const bot = inst && inst.getBot ? inst.getBot() : null;
+    const t = (inst && inst.target ? inst.target() : {}) || {};
     const p = bot && bot.entity ? bot.entity.position : null;
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({
@@ -995,20 +1096,20 @@ const server = http.createServer((req, res) => {
       req.on('end', () => {
         try {
           const j = JSON.parse(body || '{}');
-          if (botApi && botApi.setPreferView) botApi.setPreferView(Boolean(j.preferView));
+          if (inst && inst.setPreferView) inst.setPreferView(Boolean(j.preferView));
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ preferView: botApi && botApi.getPreferView ? botApi.getPreferView() : null }));
+          res.end(JSON.stringify({ preferView: inst && inst.getPreferView ? inst.getPreferView() : null }));
         } catch (e) { res.writeHead(400); res.end('bad json'); }
       });
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ preferView: botApi && botApi.getPreferView ? botApi.getPreferView() : true }));
+    res.end(JSON.stringify({ preferView: inst && inst.getPreferView ? inst.getPreferView() : true }));
     return;
   }
 
   if (req.url === '/world') {
-    const bot = botApi && botApi.getBot && botApi.getBot();
+    const inst = pick(req); const bot = inst && inst.getBot ? inst.getBot() : null;
     let columns = 0;
     let sample = null;
     try {
@@ -1118,18 +1219,19 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url === '/chat') {
+    const inst = pick(req);
     if (req.method === 'POST') {
       let body = '';
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
-        const bot = botApi && botApi.getBot && botApi.getBot();
+        const bot = inst && inst.getBot ? inst.getBot() : null;
         const text = String(body).slice(0, 240);
         if (!bot || !bot.entity) { res.writeHead(409, { 'Content-Type': 'text/plain' }); res.end('nicht verbunden'); return; }
         try { bot.chat(text); res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('ok'); } catch (e) { res.writeHead(500); res.end('fehler'); }
       });
       return;
     }
-    const lines = (botApi && botApi.getChat) ? botApi.getChat().slice(-60) : [];
+    const lines = (inst && inst.getChat) ? inst.getChat().slice(-60) : [];
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ lines }));
     return;
@@ -1151,7 +1253,7 @@ const server = http.createServer((req, res) => {
             res.end(JSON.stringify({ waypoints: next }));
             return;
           }
-          const bot = botApi && botApi.getBot && botApi.getBot();
+          const inst = pick(req); const bot = inst && inst.getBot ? inst.getBot() : null;
           const p = bot && bot.entity ? bot.entity.position : null;
           const wp = {
             name: String(j.name || 'punkt').slice(0, 32),
@@ -1187,7 +1289,7 @@ const server = http.createServer((req, res) => {
           target = list.find((w) => w.name === j.name) || null;
         }
         if (!target) { res.writeHead(404); res.end('ziel fehlt'); return; }
-        try { fs.appendFileSync(CMD, 'goto ' + Math.round(target.x) + ' ' + Math.round(target.y) + ' ' + Math.round(target.z) + '\n'); } catch (e) {}
+        try { fs.appendFileSync((inst && inst.cmdFile) || CMD, 'goto ' + Math.round(target.x) + ' ' + Math.round(target.y) + ' ' + Math.round(target.z) + '\n'); } catch (e) {}
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, target }));
       } catch (e) { res.writeHead(400); res.end('bad json'); }
@@ -1196,13 +1298,14 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && (req.url === '/inventory/equip' || req.url === '/inventory/drop')) {
+    const inst = pick(req);
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       try {
         const j = JSON.parse(body || '{}');
         const verb = req.url.endsWith('equip') ? 'equip ' : 'drop ';
-        try { fs.appendFileSync(CMD, verb + Number(j.slot) + '\n'); } catch (e) {}
+        try { fs.appendFileSync((inst && inst.cmdFile) || CMD, verb + Number(j.slot) + '\n'); } catch (e) {}
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('ok');
       } catch (e) { res.writeHead(400); res.end('bad json'); }
@@ -1211,7 +1314,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url === '/inventory') {
-    const bot = botApi && botApi.getBot && botApi.getBot();
+    const inst = pick(req); const bot = inst && inst.getBot ? inst.getBot() : null;
     let items = [];
     try {
       items = (bot && bot.inventory ? bot.inventory.items() : []).map(i => ({ slot: i.slot, name: i.name, count: i.count }));
@@ -1248,14 +1351,15 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/join') {
+    const inst = pick(req);
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       try {
         const j = JSON.parse(body || '{}');
         if (!j.host) { res.writeHead(400); res.end('host fehlt'); return; }
-        if (!botApi || !botApi.join) { res.writeHead(500); res.end('bot nicht geladen'); return; }
-        botApi.join(String(j.host), Number(j.port || 25565), j.version ? String(j.version) : '');
+        if (!inst || !inst.join) { res.writeHead(500); res.end('bot nicht geladen'); return; }
+        inst.join(String(j.host), Number(j.port || 25565), j.version ? String(j.version) : '');
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('ok');
       } catch (e) { res.writeHead(400); res.end('bad json'); }
@@ -1269,7 +1373,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       const line = String(body).trim().slice(0, 200);
       if (!line) { res.end('leer'); return; }
-      try { fs.appendFileSync(CMD, line + '\n'); res.end('ok'); } catch (e) { res.end('fehler'); }
+      try { fs.appendFileSync((inst && inst.cmdFile) || CMD, line + '\n'); res.end('ok'); } catch (e) { res.end('fehler'); }
     });
     return;
   }
@@ -1331,28 +1435,61 @@ try { require.resolve('canvas'); } catch (e) {
   try { require.resolve('canvas'); console.log('CANVAS fertig'); } catch (e3) { console.log('CANVAS_FEHLER (Live-Ansicht bleibt aus, Bedienfeld laeuft)'); }
 }
 
-botApi = require('./bot.js');
-if (botApi.setChatHook) {
-  botApi.setChatHook((text) => {
-    if (process.env.DISCORD_WEBHOOK && /CottiGHG|missy/i.test(text) && !/betritt den Server|hat den Server verlassen/i.test(text)) {
-      notifyDiscord('Chat: ' + text.slice(0, 300));
-    }
-  });
-}
-if (botApi && typeof botApi.startBot === 'function') {
-  const bot = botApi.startBot();
-  if (!bot) {
-    if (!process.env.MC_USER) console.log('HINWEIS: ohne MC_USER in der .env laeuft nur das Bedienfeld, kein Bot.');
-    else console.log('HINWEIS: Version wird ermittelt, Bot startet gleich.');
+const botModule = require('./bot.js');
+const ACCOUNTS_FILE = path.join(__dirname, 'accounts.json');
+
+function loadAccounts () {
+  let list = [];
+  try { list = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf8')); } catch (e) { list = []; }
+  if (!Array.isArray(list) || !list.length) {
+    list = [{ id: 'main', user: process.env.MC_USER || '', enabled: true }];
   }
-  // Live-Ansicht anhaengen, sobald ein Bot existiert (auch nach Neustart/Wechsel)
-  const hooked = new WeakSet();
-  setInterval(() => {
-    const b = botApi && botApi.getBot && botApi.getBot();
-    if (!b || hooked.has(b)) return;
+  return list
+    .filter((x) => x && x.id)
+    .map((x) => ({ id: String(x.id).slice(0, 24), user: String(x.user || ''), enabled: x.enabled !== false }));
+}
+
+const accounts = loadAccounts();
+const instances = new Map();
+for (const acc of accounts) {
+  const inst = botModule.createInstance({ id: acc.id, user: acc.user });
+  inst.enabled = acc.enabled;
+  if (inst.setChatHook) {
+    inst.setChatHook((text) => {
+      if (process.env.DISCORD_WEBHOOK && /CottiGHG|missy/i.test(text) && !/betritt den Server|hat den Server verlassen/i.test(text)) {
+        notifyDiscord('Chat: ' + text.slice(0, 300));
+      }
+    });
+  }
+  instances.set(acc.id, inst);
+}
+
+function pick (req) {
+  let id = null;
+  try {
+    const qs = (req.query || (req.url.indexOf('?') > -1 ? req.url.slice(req.url.indexOf('?')) : ''));
+    id = new URLSearchParams(qs).get('bot');
+  } catch (e) {}
+  if (id && instances.has(id)) return instances.get(id);
+  return instances.values().next().value || null;
+}
+
+// Start und Live-Ansicht je Instanz
+const hooked = new WeakSet();
+for (const inst of instances.values()) {
+  if (inst.enabled) {
+    const bot = inst.start();
+    if (!bot) console.log('HINWEIS fuer ' + inst.id + ': Version wird ermittelt oder Konto fehlt, Bot startet ggf. spaeter.');
+  }
+}
+setInterval(() => {
+  for (const inst of instances.values()) {
+    if (!inst.enabled) continue;
+    const b = inst.getBot && inst.getBot();
+    if (!b || hooked.has(b)) continue;
     hooked.add(b);
     b.once('spawn', () => startViewer(VIEWER_PORT, process.env.VIEWER_FIRST_PERSON !== '0'));
-    b.on('kicked', (r) => notifyDiscord('Kick: ' + String(JSON.stringify(r)).slice(0, 300)));
-    b.once('end', (r) => notifyDiscord('Verbindung weg: ' + r));
-  }, 2000);
-}
+    b.on('kicked', (r) => notifyDiscord('Kick (' + inst.id + '): ' + String(JSON.stringify(r)).slice(0, 300)));
+    b.once('end', (r) => notifyDiscord('Verbindung weg (' + inst.id + '): ' + r));
+  }
+}, 2000);
