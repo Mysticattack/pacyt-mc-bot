@@ -15,7 +15,8 @@
     "prismarine-auth": "^3.1.1",
     "prismarine-viewer": "^1.33.0",
     "canvas": "^3.2.3",
-    "three": "^0.169.0"
+    "three": "^0.169.0",
+    "mineflayer-pathfinder": "^2.4.5"
   },
   "license": "MIT"
 }

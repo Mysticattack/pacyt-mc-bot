@@ -264,6 +264,18 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
   </div>
 
   <div class="card">
+    <h2>Move — hinlaufen</h2>
+    <div class="row">
+      <input id="mx" class="chatin" placeholder="X" style="max-width:80px">
+      <input id="my" class="chatin" placeholder="Y" style="max-width:80px">
+      <input id="mz" class="chatin" placeholder="Z" style="max-width:80px">
+      <button class="chip" id="mgo">Los</button>
+      <button class="chip danger" id="mstop">Stop</button>
+    </div>
+    <div class="hint" id="mmsg" style="margin-top:8px">Koordinaten eintragen, der Bot sucht den Weg selbst. Ohne Y nimmt er die aktuelle Hoehe.</div>
+  </div>
+
+  <div class="card">
     <h2>Hand und Hotbar</h2>
     <div id="hotbar" class="hotbar"></div>
     <div class="hint" id="held" style="margin-top:8px">in der Hand: -</div>
@@ -462,8 +474,20 @@ const refreshState = async () => {
     renderHotbar(s);
     const pl = s.players || [];
     $('playerlist').innerHTML = pl.length
-      ? pl.map(p => '<div class="lrow"><span>' + p.name + '</span><span>' + p.dist + ' Bloecke</span></div>').join('')
+      ? pl.map(p => '<div class="lrow"><span style="display:flex;align-items:center;gap:8px">' +
+          '<img src="https://mc-heads.net/avatar/' + encodeURIComponent(p.name) + '/32" style="width:22px;height:22px;image-rendering:pixelated;border-radius:4px" onerror="this.style.visibility=\'hidden\'">' +
+          p.name + '</span><span style="display:flex;gap:6px;align-items:center">' + p.dist + ' Bloecke' +
+          '<button data-to="' + p.name + '">hin</button><button data-follow="' + p.name + '">folgen</button></span></div>').join('')
       : '<div class="hint">niemand in Sicht</div>';
+    for (const b of $('playerlist').querySelectorAll('[data-to]')) {
+      b.onclick = () => {
+        const p = pl.find((x) => x.name === b.dataset.to);
+        if (p) send('goto ' + p.x + ' ' + p.y + ' ' + p.z);
+      };
+    }
+    for (const b of $('playerlist').querySelectorAll('[data-follow]')) {
+      b.onclick = () => send('follow ' + b.dataset.follow);
+    }
   } catch (e) {}
 };
 const normKey = (e) => (e.key === ' ' ? ' ' : e.key);
@@ -581,6 +605,15 @@ $('chatsend').onclick = async () => {
   setTimeout(loadChat, 400);
 };
 $('chatin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('chatsend').click(); });
+
+$('mgo').onclick = async () => {
+  const x = $('mx').value.trim(); const y = $('my').value.trim(); const z = $('mz').value.trim();
+  if (!x || !z) { $('mmsg').textContent = 'X und Z eintragen'; return; }
+  const r = await send('goto ' + Number(x) + ' ' + (y === '' ? '~' : Number(y)) + ' ' + Number(z));
+  $('mmsg').textContent = 'unterwegs nach ' + x + ', ' + (y || 'jetzt') + ', ' + z;
+  setTimeout(loadChat, 1200);
+};
+$('mstop').onclick = () => { send('stopwalk'); $('mmsg').textContent = 'gestoppt'; };
 
 $('cmdsend').onclick = async () => {
   const v = $('cmdinput').value.trim();
@@ -783,6 +816,52 @@ function tex (name) {
   return t;
 }
 
+const playerGroup = new THREE.Group();
+scene.add(playerGroup);
+const skinCache = new Map();
+
+function headTexture (name) {
+  if (skinCache.has(name)) return skinCache.get(name);
+  const t = loader.load('https://mc-heads.net/avatar/' + encodeURIComponent(name) + '/64',
+    undefined, undefined,
+    () => { t.__failed = true; });
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.repeat.set(1, 1);
+  t.offset.set(0, 0);
+  skinCache.set(name, t);
+  return t;
+}
+
+function drawPlayers (list, self) {
+  while (playerGroup.children.length) {
+    const c = playerGroup.children.pop();
+    try { c.geometry.dispose(); c.material.dispose(); } catch (e) {}
+    playerGroup.remove(c);
+  }
+  for (const p of list) {
+    if (!p || p.name === self) continue;
+    const ht = headTexture(p.name);
+    const headMat = ht.__failed
+      ? new THREE.MeshLambertMaterial({ color: 0xcfcfcf })
+      : new THREE.MeshLambertMaterial({ map: ht });
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), headMat);
+    head.position.set(p.x + 0.5, p.y + 1.72, p.z + 0.5);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, 1.35, 0.34), new THREE.MeshLambertMaterial({ color: 0x2f6f9e }));
+    body.position.set(p.x + 0.5, p.y + 0.78, p.z + 0.5);
+    playerGroup.add(head, body);
+  }
+}
+
+async function loadPlayers () {
+  try {
+    const r = await fetch(q('/state'), { cache: 'no-store' });
+    const j = await r.json();
+    drawPlayers(j.players || [], j.user);
+  } catch (e) {}
+}
+
 let meshes = [];
 let signature = '';
 function clear () {
@@ -896,6 +975,8 @@ resize();
 loadWorld(); loadEye();
 setInterval(loadWorld, 1500);
 setInterval(loadEye, 250);
+setInterval(loadPlayers, 1500);
+loadPlayers();
 setInterval(render, 60);
 </script></body></html>`
 
@@ -1405,7 +1486,11 @@ const server = http.createServer((req, res) => {
         if (!e || !e.position) continue;
         entities += 1;
         if (e.type === 'player' && e.username) {
-          players.push({ name: e.username, dist: Math.round(bot.entity.position.distanceTo(e.position)) });
+          players.push({
+            name: e.username,
+            dist: Math.round(bot.entity.position.distanceTo(e.position)),
+            x: Math.round(e.position.x), y: Math.round(e.position.y), z: Math.round(e.position.z)
+          });
         }
       }
     } catch (e) {}
@@ -1423,6 +1508,7 @@ const server = http.createServer((req, res) => {
       food: bot ? Math.round(bot.food) : null,
       gamemode: bot && bot.game ? bot.game.gameMode : null,
       dimension: bot && bot.game ? bot.game.dimension : null,
+      user: bot ? bot.username : null,
       heldSlot: bot ? bot.quickBarSlot : null,
       heldItem: bot && bot.heldItem ? bot.heldItem.name : null,
       hotbar,
@@ -1569,6 +1655,76 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' });
       res.end(c.toBuffer('image/png'));
     } catch (e) { res.writeHead(500); res.end(''); }
+    return;
+  }
+
+  if (req.url.startsWith('/skin/')) {
+    const name = decodeURIComponent(req.url.slice('/skin/'.length).replace(/\.png$/i, '')).replace(/[^a-zA-Z0-9_]/g, '');
+    const dir = path.join(__dirname, 'skins');
+    const cacheFile = path.join(dir, name.toLowerCase() + '.png');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+    const sendFile = () => {
+      fs.readFile(cacheFile, (err, buf) => {
+        if (err) { res.writeHead(404); res.end(''); return; }
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' });
+        res.end(buf);
+      });
+    };
+    if (fs.existsSync(cacheFile)) { sendFile(); return; }
+    const getJson = (url) => new Promise((resolve) => {
+      const lib = url.startsWith('https') ? require('https') : require('http');
+      const req2 = lib.get(url, (r) => {
+        if (r.statusCode !== 200) { r.resume(); resolve(null); return; }
+        let d = '';
+        r.on('data', (c) => { d += c; });
+        r.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { resolve(null); } });
+      });
+      req2.on('error', () => resolve(null));
+      req2.setTimeout(6000, () => { req2.destroy(); resolve(null); });
+    });
+    const deadline = setTimeout(() => { try { res.writeHead(504); res.end('Zeit'); } catch (e) {} }, 12000);
+    (async () => {
+      const prof = await getJson('https://api.mojang.com/users/profiles/minecraft/' + encodeURIComponent(name));
+      if (!prof || !prof.id) {
+        // Fallback: fertiger Kopf von mc-heads
+        const lib2 = require('https');
+        const req4 = lib2.get('https://mc-heads.net/avatar/' + encodeURIComponent(name) + '/64', (r2) => {
+          if (r2.statusCode !== 200) { r2.resume(); res.writeHead(404); res.end('kein Skin'); return; }
+          const ch = [];
+          r2.on('data', (c) => ch.push(c));
+          r2.on('end', () => {
+            const buf = Buffer.concat(ch);
+            try { fs.writeFileSync(cacheFile, buf); } catch (e) {}
+            res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' });
+            res.end(buf);
+          });
+        });
+        req4.on('error', () => { try { res.writeHead(404); res.end('kein Skin'); } catch (e) {} });
+        req4.setTimeout(7000, () => { req4.destroy(); try { res.writeHead(504); res.end('Zeit'); } catch (e) {} });
+        return;
+      }
+      const full = await getJson('https://sessionserver.mojang.com/session/minecraft/profile/' + prof.id);
+      let url = null;
+      try {
+        const dec = JSON.parse(Buffer.from(full.properties[0].value, 'base64').toString('utf8'));
+        url = dec.textures.SKIN.url;
+      } catch (e) { url = null; }
+      if (!url) { res.writeHead(404); res.end(''); return; }
+      const lib = require('https');
+      const req3 = lib.get(url, (r) => {
+        if (r.statusCode !== 200) { r.resume(); res.writeHead(404); res.end(''); return; }
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => {
+          const buf = Buffer.concat(chunks);
+          try { fs.writeFileSync(cacheFile, buf); } catch (e) {}
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800' });
+          res.end(buf);
+        });
+      });
+      req3.on('error', () => { try { res.writeHead(502); res.end(''); } catch (e) {} });
+      req3.setTimeout(8000, () => { req3.destroy(); try { res.writeHead(504); res.end(''); } catch (e) {} });
+    })();
     return;
   }
 
@@ -1804,7 +1960,7 @@ process.on('uncaughtException', (e) => console.log('UNCAUGHT ' + (e && e.message
 process.on('unhandledRejection', (e) => console.log('UNHANDLED ' + (e && e.message)));
 
 function ensureDeps () {
-  const need = ['mineflayer', 'minecraft-protocol', 'prismarine-auth', 'three'];
+  const need = ['mineflayer', 'minecraft-protocol', 'prismarine-auth', 'three', 'mineflayer-pathfinder'];
   const missing = need.filter((m) => { try { require.resolve(m); return false; } catch (e) { return true; } });
   if (!missing.length) return true;
   console.log('INSTALL fehlende Pakete: ' + missing.join(', '));

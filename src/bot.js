@@ -18,6 +18,8 @@ class PatchedAuthflow extends OrigAuthflow {
 pa.Authflow = PatchedAuthflow;
 
 const mineflayer = require('mineflayer');
+let pf = null;
+try { pf = require('mineflayer-pathfinder'); } catch (e) { pf = null; }
 const fs = require('fs');
 const path = require('path');
 const mcProto = require('minecraft-protocol');
@@ -200,6 +202,13 @@ function startBot () {
   starting = false;
   lastStart = Date.now();
 
+  if (pf) {
+    try {
+      bot.loadPlugin(pf.pathfinder);
+      st('PATHFINDER geladen');
+    } catch (e) { st('PATHFINDER_FEHLER ' + e.message); }
+  }
+
   bot.on('login', () => { backoffMs = 0; st('LOGIN_OK als ' + bot.username); });
 
   // einfacher Geh-Assistent zu einer Position
@@ -367,11 +376,47 @@ function startBot () {
         case 'goto': {
           const x = Number(args[0]); const y = Number(args[1]); const z = Number(args[2]);
           if (!isFinite(x) || !isFinite(z)) { st('GOTO braucht x y z'); break; }
-          walk = { x, y: isFinite(y) ? y : Math.round(bot.entity.position.y), z, until: Date.now() + 60000 };
-          st('GOTO ' + x + ' ' + walk.y + ' ' + z);
+          const zielY = isFinite(y) ? Math.round(y) : Math.round(bot.entity.position.y);
+          if (pf && bot.pathfinder) {
+            try {
+              const moves = new pf.Movements(bot);
+              moves.canDig = false;
+              moves.allow1by1towers = true;
+              moves.scafoldingBlocks = [];
+              bot.pathfinder.setMovements(moves);
+              st('GOTO suche Weg nach ' + Math.round(x) + ',' + zielY + ',' + Math.round(z));
+              bot.pathfinder.goto(new pf.goals.GoalNear(Math.round(x), zielY, Math.round(z), 2))
+                .then(() => st('GOTO angekommen ' + Math.round(bot.entity.position.x) + ',' + Math.round(bot.entity.position.y) + ',' + Math.round(bot.entity.position.z)))
+                .catch((e) => st('GOTO_FEHLER ' + (e && e.message)));
+            } catch (e) { st('GOTO_FEHLER ' + e.message); }
+          } else {
+            walk = { x, y: zielY, z, until: Date.now() + 60000 };
+            st('GOTO ohne Wegfindung nach ' + x + ' ' + zielY + ' ' + z);
+          }
           break;
         }
-        case 'stopwalk': walk = null; st('STOPWALK'); break;
+        case 'follow': {
+          const name = String(args[0] || '').trim();
+          if (!name) { st('FOLLOW braucht einen Spielernamen'); break; }
+          const ziel = Object.values(bot.entities).find((e) => e.type === 'player' && e.username && e.username.toLowerCase() === name.toLowerCase());
+          if (!ziel) { st('FOLLOW Ziel nicht in Sicht: ' + name); break; }
+          if (!pf || !bot.pathfinder) { st('FOLLOW ohne Wegfindung nicht moeglich'); break; }
+          try {
+            const moves = new pf.Movements(bot);
+            moves.canDig = false;
+            bot.pathfinder.setMovements(moves);
+            bot.pathfinder.setGoal(new pf.goals.GoalFollow(ziel, 2), true);
+            st('FOLLOW ' + name);
+          } catch (e) { st('FOLLOW_FEHLER ' + e.message); }
+          break;
+        }
+        case 'stopwalk': {
+          walk = null;
+          try { if (bot.pathfinder) bot.pathfinder.stop(); } catch (e) {}
+          try { bot.clearControlStates(); } catch (e) {}
+          st('STOPWALK');
+          break;
+        }
         case 'command': {
           const text = args.join(' ').trim();
           if (!text) { st('COMMAND braucht Text'); break; }
