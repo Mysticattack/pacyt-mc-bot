@@ -475,7 +475,7 @@ const refreshState = async () => {
     const pl = s.players || [];
     $('playerlist').innerHTML = pl.length
       ? pl.map(p => '<div class="lrow"><span style="display:flex;align-items:center;gap:8px">' +
-          '<img src="https://mc-heads.net/avatar/' + encodeURIComponent(p.name) + '/32" style="width:22px;height:22px;image-rendering:pixelated;border-radius:4px" onerror="this.style.visibility=\'hidden\'">' +
+          '<img src="https://mc-heads.net/avatar/' + encodeURIComponent(p.name) + '/32" style="width:22px;height:22px;image-rendering:pixelated;border-radius:4px" onerror="this.remove()">' +
           p.name + '</span><span style="display:flex;gap:6px;align-items:center">' + p.dist + ' Bloecke' +
           '<button data-to="' + p.name + '">hin</button><button data-follow="' + p.name + '">folgen</button></span></div>').join('')
       : '<div class="hint">niemand in Sicht</div>';

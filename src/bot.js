@@ -206,6 +206,12 @@ function startBot () {
     try {
       bot.loadPlugin(pf.pathfinder);
       st('PATHFINDER geladen');
+      bot.on('path_update', (r) => {
+        if (!r || !r.status) return;
+        if (r.status === 'moving') return;
+        st('PF ' + r.status + (r.path ? ' (' + r.path.length + ' Schritte)' : ''));
+      });
+      bot.on('goal_reached', () => st('PF Ziel erreicht'));
     } catch (e) { st('PATHFINDER_FEHLER ' + e.message); }
   }
 
@@ -385,9 +391,14 @@ function startBot () {
               moves.scafoldingBlocks = [];
               bot.pathfinder.setMovements(moves);
               st('GOTO suche Weg nach ' + Math.round(x) + ',' + zielY + ',' + Math.round(z));
+              const frist = setTimeout(() => {
+                try { bot.pathfinder.stop(); } catch (e) {}
+                st('GOTO abgebrochen: kein Weg innerhalb 60s');
+              }, 60000);
               bot.pathfinder.goto(new pf.goals.GoalNear(Math.round(x), zielY, Math.round(z), 2))
                 .then(() => st('GOTO angekommen ' + Math.round(bot.entity.position.x) + ',' + Math.round(bot.entity.position.y) + ',' + Math.round(bot.entity.position.z)))
-                .catch((e) => st('GOTO_FEHLER ' + (e && e.message)));
+                .catch((e) => st('GOTO_FEHLER ' + (e && e.message)))
+                .finally(() => clearTimeout(frist));
             } catch (e) { st('GOTO_FEHLER ' + e.message); }
           } else {
             walk = { x, y: zielY, z, until: Date.now() + 60000 };
