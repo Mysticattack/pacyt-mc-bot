@@ -319,7 +319,8 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
       </div>
     </div>
     <div class="row" style="margin-top:12px">
-      <a class="link" id="v3dlink" href="/v3d" target="_blank">Live-Ansicht öffnen</a>
+      <a class="link" id="v3dlink" href="/v3d" target="_blank">Karte oeffnen</a>
+      <a class="link" id="fpvlink" href="/fpv" target="_blank">Ego-Ansicht (spielen)</a>
       <a class="link" id="joinBtn" href="#">Server wechseln</a>
     </div>
   </div>
@@ -641,6 +642,7 @@ const openJoin = async () => {
 };
 $('joinBtn').onclick = (e) => { e.preventDefault(); openJoin(); };
 $('v3dlink').onclick = (e) => { e.preventDefault(); window.open('/v3d?bot=' + encodeURIComponent(BOT), '_blank'); };
+$('fpvlink').onclick = (e) => { e.preventDefault(); window.open('/fpv?bot=' + encodeURIComponent(BOT), '_blank'); };
 
 const closeJoin = () => modal.classList.remove('open');
 $('jClose').onclick = closeJoin;
@@ -680,6 +682,193 @@ openJoin();
 </script></body></html>`
 
 
+
+
+const pageFpv = `<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Ego-Ansicht</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0a0e13">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0a0e13;color:#e8eef5;font-family:ui-sans-serif,system-ui,sans-serif}
+#c{display:block;width:100vw;height:100vh;touch-action:none}
+#cross{position:fixed;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;pointer-events:none;opacity:.85}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff}
+#cross:before{left:6px;top:0;width:2px;height:14px}
+#cross:after{top:6px;left:0;height:2px;width:14px}
+.hud{position:fixed;left:10px;top:10px;background:rgba(10,14,19,.72);border:1px solid #26303b;border-radius:10px;padding:8px 10px;font-size:12px;line-height:1.45;backdrop-filter:blur(4px)}
+.hearts{color:#e35d6a;letter-spacing:1px}
+.pad{position:fixed;left:14px;bottom:16px;display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(2,52px);gap:6px;z-index:5}
+.pad button{border-radius:12px;border:1px solid #33414f;background:rgba(20,26,33,.85);color:#e8eef5;font-size:16px;font-weight:600}
+.pad button:active{background:#2bb96e;color:#04140b}
+.pad .sp{visibility:hidden}
+.right{position:fixed;right:14px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:5}
+.right button{width:86px;padding:12px 8px;border-radius:12px;border:1px solid #33414f;background:rgba(20,26,33,.85);color:#e8eef5;font-size:12.5px}
+.right button:active{background:#2bb96e;color:#04140b}
+.top{position:fixed;right:10px;top:10px;display:flex;gap:6px;z-index:5}
+.top a,.top button{padding:8px 10px;border-radius:10px;border:1px solid #26303b;background:rgba(10,14,19,.72);color:#c8d3df;font-size:12px;text-decoration:none;cursor:pointer}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="cross"></div>
+<div class="hud"><div id="info">lade ...</div><div class="hearts" id="hp"></div></div>
+<div class="top"><a href="/v3d" id="orbit">Karte</a><button id="shot">Foto</button></div>
+<div class="pad">
+  <span class="sp"></span><button data-move="forward">W</button><span class="sp"></span>
+  <button data-move="left">A</button><button data-move="back">S</button><button data-move="right">D</button>
+</div>
+<div class="right">
+  <button data-move="jump">Sprung</button>
+  <button id="atk">Schlagen</button>
+  <button id="use">Benutzen</button>
+</div>
+<script type="module">
+const THREE = await import('/v3d/three.module.js');
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const sky = new THREE.Color(0x9fd0f0);
+scene.background = sky;
+scene.fog = new THREE.Fog(sky, 90, 190);
+const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 400);
+scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x2b3a2b, 0.85));
+const sun = new THREE.DirectionalLight(0xfff3d6, 1.15);
+sun.position.set(60, 120, 40);
+scene.add(sun);
+
+const botQ = new URLSearchParams(location.search).get('bot');
+const q = (p) => p + (p.indexOf('?') > -1 ? '&' : '?') + 'bot=' + encodeURIComponent(botQ || '');
+const texCache = new Map();
+const loader = new THREE.TextureLoader();
+const maxAniso = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
+
+function tex (name) {
+  if (texCache.has(name)) return texCache.get(name);
+  const t = loader.load('/icon/' + encodeURIComponent(name) + '.png');
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = maxAniso;
+  if ('colorSpace' in t) t.colorSpace = THREE.SRGBColorSpace;
+  texCache.set(name, t);
+  return t;
+}
+
+let meshes = [];
+let signature = '';
+function clear () {
+  for (const m of meshes) { scene.remove(m); try { m.geometry.dispose(); m.material.dispose(); } catch (e) {} }
+  meshes = [];
+}
+
+function build (data) {
+  const sig = JSON.stringify([data.center, data.palette.map((p) => p.name), data.cells.length]);
+  if (sig === signature) return;
+  signature = sig;
+  clear();
+  const groups = new Map();
+  for (const c of data.cells) { if (!groups.has(c[3])) groups.set(c[3], []); groups.get(c[3]).push(c); }
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const mat4 = new THREE.Matrix4();
+  for (const [idx, list] of groups) {
+    const entry = data.palette[idx];
+    const name = entry && entry.name ? entry.name : null;
+    const tint = name ? (/grass|leaves|foliage|vine|fern|moss/.test(name) ? 0x8ec46a : (/water|bubble/.test(name) ? 0x5b8fd8 : 0xffffff)) : 0xffffff;
+    const mat = name ? new THREE.MeshLambertMaterial({ map: tex(name), color: tint }) : new THREE.MeshLambertMaterial({ color: 0x8a8a8a });
+    const inst = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((c, i) => { mat4.setPosition(data.center.x + c[0], data.center.y + c[1], data.center.z + c[2]); inst.setMatrixAt(i, mat4); });
+    inst.instanceMatrix.needsUpdate = true;
+    scene.add(inst);
+    meshes.push(inst);
+  }
+}
+
+async function loadWorld () {
+  try {
+    const r = await fetch(q('/view3d.json?r=18&b=8&t=12'), { cache: 'no-store' });
+    const j = await r.json();
+    if (j.error) { document.getElementById('info').textContent = j.error; return; }
+    build(j);
+    document.getElementById('info').textContent = 'Version ' + j.version + ' · ' + j.cells.length + ' Bloecke';
+  } catch (e) {}
+}
+
+let eye = new THREE.Vector3(0, 70, 0);
+let look = new THREE.Vector3(0, 70, 1);
+let heldName = '-';
+
+async function loadEye () {
+  try {
+    const r = await fetch(q('/eye'), { cache: 'no-store' });
+    const j = await r.json();
+    if (j.error) { document.getElementById('info').textContent = j.error; return; }
+    eye.set(j.eye.x, j.eye.y, j.eye.z);
+    look.set(j.target.x, j.target.y, j.target.z);
+    const hp = Math.max(0, Math.min(10, Math.round((j.health || 0) / 2)));
+    document.getElementById('hp').textContent = '\u2665'.repeat(hp) + '\u2661'.repeat(10 - hp) + '  ' + (j.held || '-');
+    document.getElementById('info').textContent = 'Position ' + Math.round(j.eye.x) + ', ' + Math.round(j.eye.y - 1.62) + ', ' + Math.round(j.eye.z);
+    heldName = j.held;
+  } catch (e) {}
+}
+
+const cmd = (t) => fetch(q('/cmd'), { method: 'POST', body: t });
+
+let drag = false, lx = 0, ly = 0;
+canvas.addEventListener('pointerdown', (e) => { drag = true; lx = e.clientX; ly = e.clientY; });
+addEventListener('pointerup', () => { drag = false; });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dx = Math.round((e.clientX - lx) / 4);
+  const dy = Math.round((e.clientY - ly) / 4);
+  if (!dx && !dy) return;
+  lx = e.clientX; ly = e.clientY;
+  cmd('lookrel ' + dx + ' ' + dy);
+});
+
+for (const b of document.querySelectorAll('[data-move]')) {
+  const m = b.dataset.move;
+  const on = (e) => { e.preventDefault(); cmd('set ' + m + ' 1'); };
+  const off = (e) => { e.preventDefault(); cmd('set ' + m + ' 0'); };
+  b.addEventListener('mousedown', on); b.addEventListener('mouseup', off); b.addEventListener('mouseleave', off);
+  b.addEventListener('touchstart', on, { passive: false }); b.addEventListener('touchend', off, { passive: false });
+}
+document.getElementById('atk').onclick = () => cmd('attack');
+document.getElementById('use').onclick = () => cmd('use');
+document.getElementById('shot').onclick = () => {
+  render(); const a = document.createElement('a');
+  a.download = 'ego-' + Date.now() + '.png'; a.href = canvas.toDataURL('image/png'); a.click();
+};
+
+addEventListener('keydown', (e) => {
+  const map = { w: 'forward', a: 'left', s: 'back', d: 'right', ' ': 'jump', shift: 'sneak' };
+  const k = map[e.key.toLowerCase()] || map[e.key];
+  if (k) { e.preventDefault(); cmd('set ' + k + ' 1'); }
+});
+addEventListener('keyup', (e) => {
+  const map = { w: 'forward', a: 'left', s: 'back', d: 'right', ' ': 'jump', shift: 'sneak' };
+  const k = map[e.key.toLowerCase()] || map[e.key];
+  if (k) cmd('set ' + k + ' 0');
+});
+
+function resize () {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+function render () {
+  camera.position.copy(eye);
+  camera.lookAt(look);
+  renderer.render(scene, camera);
+}
+
+resize();
+loadWorld(); loadEye();
+setInterval(loadWorld, 1500);
+setInterval(loadEye, 250);
+setInterval(render, 60);
+</script></body></html>`
 
 const page3d = `<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -738,7 +927,8 @@ scene.background = new THREE.Color(0x8ec5e8);
 scene.fog = new THREE.Fog(0x8ec5e8, 120, 300);
 const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
 const light = new THREE.DirectionalLight(0xffffff, 1.5); light.position.set(30, 60, 20); scene.add(light);
-scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x2b3a2b, 0.7));
 
 const PALETTE = [
   [/grass_block|grass_path/, 0x6aa84f],
@@ -809,8 +999,9 @@ function makeTexture (name) {
   if (texCache.has(name)) return texCache.get(name);
   const tex = texLoader.load('/icon/' + encodeURIComponent(name) + '.png');
   tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.anisotropy = (renderer.capabilities && renderer.capabilities.getMaxAnisotropy) ? renderer.capabilities.getMaxAnisotropy() : 1;
   if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
   texCache.set(name, tex);
   return tex;
@@ -1046,6 +1237,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url.startsWith('/fpv')) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(pageFpv);
+    return;
+  }
+
   if (req.url.startsWith('/v3d')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(page3d);
@@ -1145,6 +1342,30 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url === '/eye') {
+    const inst = pick(req);
+    const bot = inst && inst.getBot ? inst.getBot() : null;
+    if (!bot || !bot.entity) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end('{"error":"kein Bot"}'); return; }
+    const p = bot.entity.position;
+    const yaw = bot.entity.yaw;
+    const pitch = bot.entity.pitch;
+    const cp = Math.cos(pitch);
+    const dir = { x: -Math.sin(yaw) * cp, y: -Math.sin(pitch), z: -Math.cos(yaw) * cp };
+    const eye = { x: p.x, y: p.y + 1.62, z: p.z };
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({
+      eye,
+      target: { x: eye.x + dir.x * 12, y: eye.y + dir.y * 12, z: eye.z + dir.z * 12 },
+      yaw,
+      pitch,
+      health: Math.round(bot.health),
+      food: Math.round(bot.food),
+      held: bot.heldItem ? bot.heldItem.name : null,
+      connected: true
+    }));
+    return;
+  }
+
   if (req.url === '/state') {
     const inst = pick(req);
     const bot = inst && inst.getBot ? inst.getBot() : null;
@@ -1234,6 +1455,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url === '/prefs') {
+    const inst = pick(req);
     if (req.method === 'POST') {
       let body = '';
       req.on('data', (c) => { body += c; });
@@ -1421,6 +1643,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/goto') {
+    const inst = pick(req);
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
@@ -1512,6 +1735,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/cmd') {
+    const inst = pick(req);
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
