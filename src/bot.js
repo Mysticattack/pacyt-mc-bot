@@ -100,6 +100,8 @@ let onChatLine = null;
 function setChatHook (fn) { onChatLine = fn; }
 const chatLog = [];            // letzte Chat-Zeilen fuer das Bedienfeld
 let walk = null;               // laufendes Ziel (goto)
+let pendingServer = null;      // /server Ziel, das noch bestaetigt werden muss
+let serverTryNative = false;   // schon mit der Serverversion versucht?
 let starting = false;
 let reconnectTimer = null;
 const learnedVersion = {};   // host -> Version, die der Server verlangt
@@ -108,7 +110,7 @@ let backoffMs = 0;           // Wartezeit nach Raten-Begrenzung
 let failures = 0;            // Fehlversuche ohne Spawn in Folge
 let preferView = (loadJson(PREFS_FILE, {}).preferView !== undefined)
   ? Boolean(loadJson(PREFS_FILE, {}).preferView)
-  : process.env.MC_RENDER !== '0';  // fuer die Ansicht ggf. aeltere Version nutzen
+  : process.env.MC_RENDER === '1';  // Herabsetzen nur noch auf Wunsch, eigene 3D-Ansicht braucht es nicht
 
 function scheduleStart (delay) {
   if (reconnectTimer) return;
@@ -226,6 +228,14 @@ function startBot () {
 
   bot.on('spawn', () => {
     failures = 0;
+    if (pendingServer && serverTryNative) {
+      const ziel = pendingServer;
+      pendingServer = null;
+      serverTryNative = false;
+      setTimeout(() => {
+        try { bot.chat('/server ' + ziel); st('SERVERWECHSEL wiederholt: ' + ziel); } catch (e) {}
+      }, 2500);
+    }
     bot._spawns = (bot._spawns || 0) + 1;
     const first = bot._spawns === 1;
     const p = bot.entity.position;
@@ -362,6 +372,22 @@ function startBot () {
           break;
         }
         case 'stopwalk': walk = null; st('STOPWALK'); break;
+        case 'command': {
+          const text = args.join(' ').trim();
+          if (!text) { st('COMMAND braucht Text'); break; }
+          try { bot.chat('/' + text); st('CMD /' + text); } catch (e) { st('CMD_FEHLER ' + e.message); }
+          break;
+        }
+        case 'server': {
+          const name = String(args[0] || '').trim();
+          if (!name) { st('SERVER braucht einen Namen'); break; }
+          st('SERVERWECHSEL /server ' + name);
+          pendingServer = name;
+          serverTryNative = false;
+          try { bot.chat('/server ' + name); } catch (e) { st('SERVER_FEHLER ' + e.message); }
+          setTimeout(() => { if (pendingServer === name) pendingServer = null; }, 40000);
+          break;
+        }
         case 'hotbar': {
           const n = Number(args[0]);
           if (!(n >= 0 && n <= 8)) { st('HOTBAR 0-8'); break; }
@@ -449,8 +475,33 @@ function startBot () {
     chatLog.push({ t: Date.now(), text: text.slice(0, 300) });
     if (chatLog.length > 200) chatLog.shift();
     if (onChatLine) { try { onChatLine(text); } catch (e) {} }
+    const failed = /Unable to connect to (\S+)/i.exec(text);
+    if (failed && pendingServer && !serverTryNative) {
+      const native = overrides.detected || '';
+      serverTryNative = true;
+      if (native && native !== overrides.version) {
+        st('BACKEND fehlgeschlagen — neuer Versuch mit Serverversion ' + native);
+        overrides.version = native;
+        pendingSwitch = true;
+        try { bot.quit(); } catch (e) {}
+      } else {
+        st('BACKEND fehlgeschlagen — keine andere Version verfuegbar');
+        pendingServer = null;
+      }
+    }
   });
-  bot.on('respawn', () => st('RESPAWN dim=' + (bot.game && bot.game.dimension)));
+  bot.on('respawn', () => {
+    st('RESPAWN dim=' + (bot.game && bot.game.dimension));
+    setTimeout(() => {
+      try {
+        if (bot._client && bot._client.state === 'play') {
+          bot._client.write('player_loaded', {});
+          bot._client.write('chunk_batch_received', { chunksPerTick: 1, chunks: [] });
+          st('RESPAWN ZUSTAND erneut gesendet');
+        }
+      } catch (e) {}
+    }, 800);
+  });
   bot.on('kicked', (r) => {
     const raw = JSON.stringify(r);
     st('KICKED ' + raw.slice(0, 240));

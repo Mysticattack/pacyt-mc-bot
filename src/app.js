@@ -293,6 +293,15 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(61,220,132,.12)}
       <input id="chatin" class="chatin" placeholder="Nachricht an den Server">
       <button class="chip" id="chatsend">Senden</button>
     </div>
+    <div class="row" style="margin-top:8px">
+      <input id="cmdinput" class="chatin" placeholder="Befehl, z. B. list oder server lobby">
+      <button class="chip" id="cmdsend">Befehl senden</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="srvname" class="chatin" placeholder="Backend-Server (Proxy), z. B. lobby">
+      <button class="chip" id="srvsend">/server wechseln</button>
+    </div>
+    <div class="hint" id="cmdmsg"></div>
   </div>
 
   <div class="card">
@@ -572,6 +581,26 @@ $('chatsend').onclick = async () => {
   setTimeout(loadChat, 400);
 };
 $('chatin').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('chatsend').click(); });
+
+$('cmdsend').onclick = async () => {
+  const v = $('cmdinput').value.trim();
+  if (!v) return;
+  send('command ' + v).then(() => {
+    $('cmdmsg').textContent = 'gesendet: /' + v;
+    $('cmdinput').value = '';
+    setTimeout(loadChat, 800);
+  });
+};
+$('cmdinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdsend').click(); });
+$('srvsend').onclick = async () => {
+  const n = $('srvname').value.trim();
+  if (!n) return;
+  send('server ' + n).then(() => {
+    $('cmdmsg').textContent = 'Wechsel zu /server ' + n + ' angefordert';
+    $('srvname').value = '';
+    setTimeout(loadChat, 1500);
+  });
+};
 
 // Wegpunkte
 const loadWp = async () => {
