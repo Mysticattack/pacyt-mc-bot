@@ -654,23 +654,70 @@ const Q = new URLSearchParams(location.search);
 let yaw = Number(Q.get('yaw') || 0.9), pitch = Number(Q.get('pitch') || 0.6), dist = Number(Q.get('dist') || 22);
 const FIXED = Q.has('pitch') || Q.has('dist');
 
+let meshes = [];
+const texLoader = new THREE.TextureLoader();
+
+function clearMeshes () {
+  for (const o of meshes) {
+    scene.remove(o);
+    try { o.geometry.dispose(); } catch (e) {}
+    try { o.material.dispose(); } catch (e) {}
+  }
+  meshes = [];
+}
+
+const texCache = new Map();
+
+function makeTexture (name) {
+  if (texCache.has(name)) return texCache.get(name);
+  const tex = texLoader.load('/icon/' + encodeURIComponent(name) + '.png');
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+  texCache.set(name, tex);
+  return tex;
+}
+
+let lastSignature = '';
+
 function build (data) {
-  if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
+  const signature = JSON.stringify([data.version, data.center, data.palette.map((p) => p.name), data.cells.length]);
+  if (signature === lastSignature) return;
+  lastSignature = signature;
+  clearMeshes();
   const colors = data.palette.map((p) => (p && p.color !== null && p.color !== undefined) ? p.color : colorFor(p && p.name ? p.name : String(p)));
+
+  // Zellen nach Blockart gruppieren, damit jede Art ihre Textur bekommt
+  const groups = new Map();
+  for (const c of data.cells) {
+    if (!groups.has(c[3])) groups.set(c[3], []);
+    groups.get(c[3]).push(c);
+  }
+
   const geo = new THREE.BoxGeometry(1, 1, 1);
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: false });
-  mesh = new THREE.InstancedMesh(geo, mat, data.cells.length);
   const m = new THREE.Matrix4();
-  const col = new THREE.Color();
-  data.cells.forEach((c, i) => {
-    m.setPosition(data.center.x + c[0], data.center.y + c[1], data.center.z + c[2]);
-    mesh.setMatrixAt(i, m);
-    col.setHex(colors[c[3]]);
-    mesh.setColorAt(i, col);
-  });
-  mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  scene.add(mesh);
+  for (const [idx, list] of groups) {
+    const entry = data.palette[idx];
+    const name = entry && entry.name ? entry.name : null;
+    const tint = name
+      ? (/grass|leaves|foliage|vine|fern|sugar_cane|lily_pad|moss/.test(name) ? 0x7cbd57
+        : (/water|bubble/.test(name) ? 0x4a7fd4 : 0xffffff))
+      : 0xffffff;
+    const mat = name
+      ? new THREE.MeshLambertMaterial({ map: makeTexture(name), color: tint })
+      : new THREE.MeshLambertMaterial({ color: colors[idx] });
+
+    const inst = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((c, i) => {
+      m.setPosition(data.center.x + c[0], data.center.y + c[1], data.center.z + c[2]);
+      inst.setMatrixAt(i, m);
+    });
+    inst.instanceMatrix.needsUpdate = true;
+    scene.add(inst);
+    meshes.push(inst);
+  }
+
   // Schwerpunkt der Bloecke (dichte Masse) statt Bounding-Box-Mitte
   let sx = 0, sy = 0, sz = 0;
   data.cells.forEach((c) => { sx += c[0]; sy += c[1]; sz += c[2]; });
@@ -729,7 +776,14 @@ window.__dbg = () => ({
   fov: camera.fov, aspect: camera.aspect,
   cam: camera.position.toArray().map(v => Math.round(v * 10) / 10),
   center: center.toArray(),
-  count: mesh ? mesh.count : 0,
+  count: meshes.reduce((a2, o) => a2 + o.count, 0),
+  meshes: meshes.length,
+  mats: meshes.slice(0, 4).map((o) => ({
+    n: o.count,
+    map: o.material.map ? 1 : 0,
+    img: (o.material.map && o.material.map.image) ? [o.material.map.image.width, o.material.map.image.height] : null,
+    col: o.material.color ? o.material.color.getHexString() : null
+  })),
   canvas: [canvas.width, canvas.height, innerWidth, innerHeight]
 });
 
@@ -1027,11 +1081,14 @@ const server = http.createServer((req, res) => {
     const name = raw.replace(/[^a-zA-Z0-9_.-]/g, '').replace(/\.png$/i, '');
     const base = path.join(__dirname, 'node_modules', 'prismarine-viewer', 'public', 'textures');
     const candidates = [];
-    const variants = [name, name + '_top', name + '_side', name + '_front', name.replace(/_block$/, '_side')];
+    const stem = name.replace(/_stairs$/, '').replace(/_slab$/, '').replace(/_fence(_gate)?$/, '').replace(/_wall$/, '');
+    const variants = [name, name + '_top', name + '_side', name + '_front', stem, stem + '_side', name.replace(/_block$/, '_side')];
+    const specialIcon = { water: 'water_still', lava: 'lava_still' };
+    if (specialIcon[name]) variants.unshift(specialIcon[name]);
     for (const ver of ['1.21.4', '1.21.1', '1.20.1']) {
       for (const v of variants) {
-        candidates.push(path.join(base, ver, 'items', v + '.png'));
         candidates.push(path.join(base, ver, 'blocks', v + '.png'));
+        candidates.push(path.join(base, ver, 'items', v + '.png'));
       }
     }
     const send = (file, i) => {
